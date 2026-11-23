@@ -211,7 +211,7 @@ describe("DGAJ15 CLI: setup", () => {
     expect(String(a.next)).not.toMatch(/send sol/i);
     expect(s.out).not.toMatch(/send sol/i);
     const d = decodeAgentPairingCode(String(a.pairingCode));
-    expect(d?.message.startsWith(`degenly-agent-pair-v1:${String(a.address)}|${OWNER}|`)).toBe(true);
+    expect(d?.message.startsWith(`Degenly (degenly.app): pair this wallet as an AI agent of ${OWNER}.\ndegenly-agent-pair-v1:${String(a.address)}|${OWNER}|`)).toBe(true);
     const key = await webcrypto.subtle.importKey("raw", base58Decode(String(a.address)) ?? new Uint8Array(0), { name: "Ed25519" }, false, ["verify"]);
     expect(await webcrypto.subtle.verify({ name: "Ed25519" }, key, d?.signature ?? new Uint8Array(0), new TextEncoder().encode(d?.message ?? ""))).toBe(true);
     // human output too

@@ -59,12 +59,22 @@ describe("DGAJ15 sign: server string vectors, copied as is", () => {
     expect(apiSigningMessage("get", "/v1/x?a=1", 7, "ab")).toBe("degenly-api-v1:GET|/v1/x?a=1|ab|7");
   });
 
-  it("dgaj7.test.ts:193-197 pairing vector + domain separation", () => {
+  it("dgaj7.test.ts:193-197 pairing vector + domain separation (DGAJ22 C-1: two lines, the first one human-readable)", () => {
     expect(AGENT_PAIR_PREFIX).toBe("degenly-agent-pair-v1:");
     expect(API_SIGNING_PREFIX).toBe("degenly-api-v1:");
     const f: AgentPairingFields = { agentWallet: "Agent111", ownerWallet: "Owner222", nonce: "n0nce", ts: 1700000000000, termsVersion: "T1", apiTermsVersion: "A1" };
-    expect(agentPairingMessage(f)).toBe("degenly-agent-pair-v1:Agent111|Owner222|n0nce|1700000000000|terms:T1|apiTerms:A1");
+    expect(agentPairingMessage(f)).toBe("Degenly (degenly.app): pair this wallet as an AI agent of Owner222.\ndegenly-agent-pair-v1:Agent111|Owner222|n0nce|1700000000000|terms:T1|apiTerms:A1");
     expect(apiSigningMessage("GET", "/v1/whoami", 1, "00").startsWith(AGENT_PAIR_PREFIX)).toBe(false);
+  });
+
+  it("DGAJ22 C-1 shared vector (byte for byte the same test in both repos)", () => {
+    const f: AgentPairingFields = { agentWallet: "AGENT", ownerWallet: "OWNER", nonce: "n1", ts: 1700000000000, termsVersion: "T1", apiTermsVersion: "A1" };
+    const m = agentPairingMessage(f);
+    expect(m).toBe("Degenly (degenly.app): pair this wallet as an AI agent of OWNER.\ndegenly-agent-pair-v1:AGENT|OWNER|n1|1700000000000|terms:T1|apiTerms:A1");
+    expect(m.split("\n")).toHaveLength(2);
+    expect(m.endsWith("\n")).toBe(false);
+    expect(m.includes("\r")).toBe(false);
+    expect(Buffer.from(m, "utf8").toString("hex")).toBe(Buffer.from("Degenly (degenly.app): pair this wallet as an AI agent of OWNER.\ndegenly-agent-pair-v1:AGENT|OWNER|n1|1700000000000|terms:T1|apiTerms:A1", "utf8").toString("hex"));
   });
 
   it("terms versions = the server constants (constants.ts:171, apiConstants.ts:20)", () => {
@@ -133,12 +143,14 @@ describe("DGAJ15 sign: pairing code", () => {
     const d = decodeAgentPairingCode(code);
     expect(d).toBeDefined();
     if (!d) return;
-    expect(d.message).toBe(`degenly-agent-pair-v1:${s.address}|${OWNER}|abcdefghijklmnop_-12|1791594000000|terms:2026-10-9|apiTerms:2026-10-1`);
+    expect(d.message).toBe(`Degenly (degenly.app): pair this wallet as an AI agent of ${OWNER}.\ndegenly-agent-pair-v1:${s.address}|${OWNER}|abcdefghijklmnop_-12|1791594000000|terms:2026-10-9|apiTerms:2026-10-1`);
     expect(d.signature.length).toBe(64);
     expect(code.length).toBeLessThanOrEqual(API_PAIR_CODE_MAX_CHARS);
-    // server parser rules (pairing.ts:70-82)
-    const parts = d.message.slice(AGENT_PAIR_PREFIX.length).split("|");
-    expect(d.message.startsWith(AGENT_PAIR_PREFIX)).toBe(true);
+    // server parser rules (pairing.ts:70-82), applied to the machine line (line 2)
+    const [human, machine = ""] = d.message.split("\n");
+    expect(human).toBe(`Degenly (degenly.app): pair this wallet as an AI agent of ${OWNER}.`);
+    const parts = machine.slice(AGENT_PAIR_PREFIX.length).split("|");
+    expect(machine.startsWith(AGENT_PAIR_PREFIX)).toBe(true);
     expect(parts).toHaveLength(6);
     expect(isSolanaAddress(parts[0] ?? "") && isSolanaAddress(parts[1] ?? "")).toBe(true);
     expect(NONCE_RE.test(parts[2] ?? "") && TS_RE.test(parts[3] ?? "")).toBe(true);
@@ -164,6 +176,16 @@ describe("DGAJ15 sign: pairing code", () => {
     const { code } = createPairingCode(s, OWNER, 1, "abcdefghijklmnop");
     const d = decodeAgentPairingCode(code);
     expect(d?.message.startsWith(API_SIGNING_PREFIX)).toBe(false);
+    expect(d?.message.includes(API_SIGNING_PREFIX)).toBe(false);
+  });
+
+  it("DGAJ22 C-1: the old one-line text is no longer produced or accepted", () => {
+    const s = signerFromSeed(RFC_SEED);
+    const old = `degenly-agent-pair-v1:${s.address}|${OWNER}|abcdefghijklmnop|1|terms:${TERMS_VERSION}|apiTerms:${API_TERMS_VERSION}`;
+    const oldCode = base58Encode(new Uint8Array([...utf8(old), ...s.sign(utf8(old))]));
+    expect(decodeAgentPairingCode(oldCode)).toBeUndefined();
+    const { code } = createPairingCode(s, OWNER, 1, "abcdefghijklmnop");
+    expect(decodeAgentPairingCode(code)?.message.startsWith("Degenly (degenly.app): ")).toBe(true);
   });
 });
 

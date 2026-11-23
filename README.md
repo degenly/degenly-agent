@@ -12,29 +12,29 @@ tools and commands below cannot trade yet. Demo mode works now. Do not fund the 
 10 demo SOL, live Degenly prices, no wallet, no key, no account, no browser step.
 The demo record lives only on your computer in `~/.degenly/demo.json`; nothing about it is sent to Degenly.
 
-One command, no wallet: `npx -y @degenly/agent demo status --json`
+One command, no wallet: `npx -y @degenly/agent@0.1.0 demo status --json`
 
 ## Live mode setup (3 steps)
 
-1. `npx -y @degenly/agent setup --owner <main wallet address>`: creates the agent wallet on this computer
+1. `npx -y @degenly/agent@0.1.0 setup --owner <main wallet address>`: creates the agent wallet on this computer
    (`~/.degenly/agent-wallet.json`) and prints its address and a pairing code (valid 10 minutes, once).
 2. On degenly.app open `/bot`, sign in with your main wallet, choose "Pair agent" and paste the pairing code.
    The site shows an API key once. Fund the agent wallet with SOL only after live trading is available, and only
    with what you can afford to lose.
-3. `npx -y @degenly/agent login --key-file <path>`: stores the API key in `~/.degenly/credentials.json`
+3. `npx -y @degenly/agent@0.1.0 login --key-file <path>`: stores the API key in `~/.degenly/credentials.json`
    (or pipe the key on stdin to `login`; the key is never taken as a command argument).
 
-Check it: `npx -y @degenly/agent whoami`. A new pairing code for the same wallet:
-`npx -y @degenly/agent pair --owner <main wallet address>` (`setup` never overwrites an existing wallet).
+Check it: `npx -y @degenly/agent@0.1.0 whoami`. A new pairing code for the same wallet:
+`npx -y @degenly/agent@0.1.0 pair --owner <main wallet address>` (`setup` never overwrites an existing wallet).
 
 ## Add Degenly to your AI app (one line per client)
 
-- Claude Code: `claude mcp add degenly -- npx -y @degenly/agent`
-- Gemini CLI: `gemini mcp add degenly npx -y @degenly/agent`
+- Claude Code: `claude mcp add degenly -- npx -y @degenly/agent@0.1.0`
+- Gemini CLI: `gemini mcp add degenly npx -y @degenly/agent@0.1.0`
 - Cursor (`mcp.json`) / Claude Desktop (`claude_desktop_config.json`):
 
 ```json
-{ "mcpServers": { "degenly": { "command": "npx", "args": ["-y", "@degenly/agent"] } } }
+{ "mcpServers": { "degenly": { "command": "npx", "args": ["-y", "@degenly/agent@0.1.0"] } } }
 ```
 
 ChatGPT does not support local MCP servers, so it cannot use this package. The Gemini web app: not verified.

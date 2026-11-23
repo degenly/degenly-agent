@@ -3,7 +3,7 @@
  * Injected `fetch` (a fake Degenly that verifies every request signature like botApi.ts:286-312, and every executed
  * transaction like swapApi.ts:865-880: agent's ed25519 signature over the message + GF1 message hash == quoted).
  * The quoted transaction is the REAL recorded Jupiter metis transaction (degenly src/data/fixtures/
- * jupiter-swap-v2-order-metis-sol-usdc.json) with the fixture taker replaced by this test's agent wallet.
+ * jupiter-swap-v2-order-metis-sol-usdc.json) re-keyed for this test's agent wallet (taker + its ATAs, ./rekey.ts).
  * Temp home: never the real ~/.degenly. No network.
  */
 import { createHash, createPublicKey, verify as edVerify } from "node:crypto";
@@ -23,6 +23,7 @@ import { base58Decode, base58Encode } from "../src/sign.js";
 import { CONFIRM_FIELD, confirmMessage, requestConfirmation, type Elicitor } from "../src/tools/confirm.js";
 import { createLiveTrade } from "../src/tools/live-trade.js";
 import { base64ToBytes, bytesToBase64, parseTxLayout } from "../src/tx.js";
+import { rekey } from "./rekey.js";
 
 const NOW = 1791594000000;
 const API_KEY = `dgk_${base58Encode(new Uint8Array(32).fill(9))}`;
@@ -73,7 +74,7 @@ function rig(o: FakeOpts = {}, env: Record<string, string> = {}, paired = true) 
     agent = c.wallet.address;
     if (!saveCredentials(home, API_KEY)) throw new Error("credentials");
   }
-  const quotedTx = o.foreignTx ? base64ToBytes(METIS_TX) ?? new Uint8Array(0) : swapKey(base64ToBytes(METIS_TX) ?? new Uint8Array(0), FIXTURE_TAKER, agent || FIXTURE_TAKER);
+  const quotedTx = o.foreignTx ? base64ToBytes(METIS_TX) ?? new Uint8Array(0) : rekey(base64ToBytes(METIS_TX) ?? new Uint8Array(0), agent || FIXTURE_TAKER);
   const calls: { method: string; path: string; body: string }[] = [];
   const executed: { signedOk: boolean; gf1: boolean; requestId: unknown }[] = [];
   const fetch: FetchLike = async (url, init) => {
@@ -528,7 +529,130 @@ describe("DGAJ16 rule 6: every live answer is mode live; a buy answer carries th
   });
 });
 
-// ---- no double send ------------------------------------------------------------------------------
+// ---- DGAJ22: local tx check in the trade path + foreign API base + markdown ---------------------------
+
+const PUMP_FUN = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
+const JUPITER = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
+
+/** A fake server that quotes `forge(agent-keyed real metis tx)` instead of the real one. */
+function forgedQuote(r: ReturnType<typeof rig>, forge: (t: Uint8Array) => Uint8Array) {
+  return (q: URLSearchParams): Reply => {
+    const t = forge(rekey(base64ToBytes(METIS_TX) ?? new Uint8Array(0), r.agent));
+    const side = q.get("side");
+    const SOL = "So11111111111111111111111111111111111111112";
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        quote: {
+          requestId: "req-evil", serverTs: NOW, expiresInMs: 30000, router: "metis", side,
+          inputMint: side === "buy" ? SOL : q.get("mint"), outputMint: side === "buy" ? q.get("mint") : SOL,
+          inAmount: q.get("amount"), outAmount: "123456789", minOutAmount: "120000000",
+          inDecimals: side === "buy" ? 9 : 5, outDecimals: side === "buy" ? 5 : 9, inUsd: 2.1, slippageAppliedPct: 3, slippageMode: "auto",
+          cost: { degenlyFeeBps: 100, networkAndPriorityLamports: 5143, priceImpactPct: 0.4 },
+          transaction: bytesToBase64(t), gasless: false, tradingEnabled: true, mev: "readonly",
+        },
+      },
+    };
+  };
+}
+
+/** the metis tx's System Transfer (agent → own wSOL account): its destination index → 8 (a lookup-table account). */
+function redirectWrap(t: Uint8Array): Uint8Array {
+  const pat = [3, 2, 0, 2, 12, 2, 0, 0, 0];
+  const out = new Uint8Array(t);
+  for (let i = 0; i + pat.length <= out.length; i++) {
+    if (pat.every((v, j) => out[i + j] === v)) {
+      out[i + 3] = 8;
+      return out;
+    }
+  }
+  throw new Error("wrap transfer not found");
+}
+
+describe("DGAJ22 E-1: the package checks the quoted transaction itself before the human is asked / anything is signed", () => {
+  it("an unlisted program in the quote → TX_PROGRAM_NOT_ALLOWED; no form, /v1/execute never fetched (buy and sell)", async () => {
+    const r2 = rig({ quote: (q) => forgedQuote(r2, (t) => swapKey(t, JUPITER, PUMP_FUN))(q) }, { DEGENLY_CONFIRM: "off" });
+    const m = await mcp(r2, accept);
+    expect((await m.call("degenly_live_buy", { mint: BONK, sol: "0.05" })).a).toMatchObject({ ok: false, mode: "live", error: "TX_PROGRAM_NOT_ALLOWED" });
+    expect((await m.call("degenly_live_sell", { mint: BONK, amount: "all" })).a).toMatchObject({ ok: false, mode: "live", error: "TX_PROGRAM_NOT_ALLOWED" });
+    expect(m.asked.length).toBe(0);
+    expect(r2.executes()).toBe(0);
+    await m.close();
+  });
+
+  it("a System Transfer agent → foreign address in the quote → TX_UNEXPECTED_TRANSFER; no form, no execute (also with a form-capable client)", async () => {
+    const r = rig({ quote: (q) => forgedQuote(r, redirectWrap)(q) });
+    const m = await mcp(r, accept);
+    const b = await m.call("degenly_live_buy", { mint: BONK, sol: "0.05" });
+    expect(b.a).toMatchObject({ ok: false, mode: "live", error: "TX_UNEXPECTED_TRANSFER" });
+    expect(String(b.a.hint)).toContain("Nothing was signed or sent");
+    expect(m.asked.length).toBe(0);
+    expect(r.executes()).toBe(0);
+    await m.close();
+  });
+
+  it("the real (agent-keyed) quote still goes through: ONE execute, server-verified signature + GF1", async () => {
+    const r = rig({}, { DEGENLY_CONFIRM: "off" });
+    expect(await createLiveTrade(r.live, () => undefined).buy(BONK, "0.05")).toMatchObject({ ok: true, mode: "live", status: "confirmed" });
+    expect(r.executed).toEqual([{ signedOk: true, gf1: true, requestId: "req-1" }]);
+  });
+});
+
+describe("DGAJ22 E-1: a DEGENLY_API_BASE other than https://degenly.app is shown and needs the human", () => {
+  const FOREIGN = "https://degenly-api.app";
+
+  it("foreign base: the FIRST line of the summary is the warning; the default base has no such line", async () => {
+    const r = rig({}, { DEGENLY_API_BASE: `${FOREIGN}/` });
+    const m = await mcp(r, accept);
+    expect((await m.call("degenly_live_buy", { mint: BONK, sol: "0.05" })).a).toMatchObject({ ok: true });
+    expect((m.asked[0] ?? "").split("\n")[0]).toBe(`WARNING: this trade is sent to ${FOREIGN}, not degenly.app.`);
+    expect(r.calls.every((c) => c.path.startsWith("/v1/"))).toBe(true);
+    await m.close();
+    const d = rig();
+    const md = await mcp(d, accept);
+    await md.call("degenly_live_buy", { mint: BONK, sol: "0.05" });
+    expect(md.asked[0] ?? "").not.toContain("WARNING");
+    expect((md.asked[0] ?? "").split("\n")[0]).toMatch(/^REAL TRADE/);
+    await md.close();
+    // the same for the pure function (explicit default base)
+    const s = { side: "sell" as const, mint: BONK, name: "a", symbol: "b", inText: "1", outText: "1", minOutText: "1", feeBps: 1, networkSol: "0" };
+    expect(confirmMessage({ ...s, apiBase: "https://degenly.app" }).split("\n")[0]).toMatch(/^REAL TRADE/);
+    expect(confirmMessage({ ...s, apiBase: FOREIGN }).split("\n")[0]).toBe(`WARNING: this trade is sent to ${FOREIGN}, not degenly.app.`);
+  });
+
+  it("DEGENLY_CONFIRM=off + foreign base → CUSTOM_API_NEEDS_CONFIRM for buy and sell: nothing signed, no execute", async () => {
+    const r = rig({}, { DEGENLY_CONFIRM: "off", DEGENLY_API_BASE: FOREIGN });
+    const t = createLiveTrade(r.live, () => undefined);
+    const b = await t.buy(BONK, "0.05");
+    expect(b).toMatchObject({ ok: false, mode: "live", error: "CUSTOM_API_NEEDS_CONFIRM" });
+    expect(String(b.hint)).toContain(FOREIGN);
+    expect(await t.sell(BONK, "all")).toMatchObject({ ok: false, error: "CUSTOM_API_NEEDS_CONFIRM" });
+    expect(r.executes()).toBe(0);
+    // off + the default base still works (DGAJ16 behaviour unchanged)
+    const ok = rig({}, { DEGENLY_CONFIRM: "off" });
+    expect(await createLiveTrade(ok.live, () => undefined).buy(BONK, "0.05")).toMatchObject({ ok: true, confirm: "off" });
+  });
+});
+
+describe("DGAJ22 E-3: markdown marks in the coin name / symbol never reach the summary", () => {
+  it("name `**SOL** [verified](x)` → no * _ [ ] ( ) # ` ~ > | in the name / symbol lines; the mint line stays before the name", async () => {
+    const r = rig({ tokenName: "**SOL** [verified](x)" });
+    const m = await mcp(r, accept);
+    await m.call("degenly_live_buy", { mint: BONK, sol: "0.05" });
+    const lines = (m.asked[0] ?? "").split("\n");
+    const name = lines.find((l) => l.startsWith("Token name")) ?? "";
+    expect(name).toBe('Token name (untrusted text, set by the coin creator): "SOL verified x"');
+    expect(lines.findIndex((l) => l.startsWith("Token mint"))).toBeLessThan(lines.indexOf(name));
+    await m.close();
+    const msg = confirmMessage({ side: "buy", mint: BONK, name: "# _a_ `b` ~c~ > d | e", symbol: "*[S]*", inText: "1", outText: "1", minOutText: "1", feeBps: 1, networkSol: "0" });
+    for (const l of msg.split("\n").filter((x) => x.startsWith("Token name") || x.startsWith("Token symbol"))) {
+      expect(l.replace(/^Token (name|symbol) \(untrusted text, set by the coin creator\): /, "")).not.toMatch(/[*_[\]()#`~>|]/);
+    }
+  });
+});
+
+// ---- no double send (DGAJ16) --------------------------------------------------------------------------
 
 describe("DGAJ16 execute is sent at most once (no automatic retry: double-buy risk)", () => {
   it("network error / timeout at execute → EXECUTE_OUTCOME_UNKNOWN, exactly 1 execute request", async () => {

@@ -11,7 +11,10 @@
  *   the client does not offer form elicitation → CONFIRM_UNSUPPORTED, unless the HUMAN set DEGENLY_CONFIRM=off.
  * DEGENLY_CONFIRM is read ONLY from the environment of this process (LiveDeps.env = process.env); no tool argument
  * reaches it, so an agent cannot switch it off.
+ * DGAJ22 (audit E-1): when DEGENLY_API_BASE is not https://degenly.app, the summary's first line names that server,
+ * and DEGENLY_CONFIRM=off is refused for it (CUSTOM_API_NEEDS_CONFIRM): no confirmation + a foreign server never trade.
  */
+import { DEFAULT_API_BASE } from "../client.js";
 import { cleanText, NAME_MAX_CHARS, SYMBOL_MAX_CHARS } from "../sanitize.js";
 
 /** How long the human has to answer the confirmation form. */
@@ -34,9 +37,14 @@ export interface ConfirmSummary {
   networkSol: string;
   slippagePct?: number;
   priceImpactPct?: number;
+  /**
+   * DGAJ22: the origin the trade goes to (LiveCtx.base, from DEGENLY_API_BASE). Anything other than
+   * DEFAULT_API_BASE puts a WARNING as the summary's FIRST line. Omitted = the default (tests of the pure text).
+   */
+  apiBase?: string;
 }
 
-export type ConfirmOutcome = "accepted" | "skipped_off" | "declined" | "unsupported";
+export type ConfirmOutcome = "accepted" | "skipped_off" | "declined" | "unsupported" | "custom_api_off";
 
 /** The part of an MCP server this module uses (so tests can drive it without a transport). */
 export interface Elicitor {
@@ -44,14 +52,30 @@ export interface Elicitor {
   elicit(message: string, schema: { type: "object"; properties: Record<string, { type: "boolean"; title: string; description: string; default: boolean }>; required: string[] }, timeoutMs: number): Promise<{ action: string; content?: Record<string, unknown> }>;
 }
 
-/** Untrusted text for the human summary: cleaned, one line, no double quotes. */
+/**
+ * DGAJ22 (audit E-3): markdown marks a client could render (`* _ [ ] ( ) # \` ~ > |`) are dropped from the coin
+ * name / symbol, so `**SOL** [verified](x)` cannot look like bold text or a link in the confirmation window.
+ */
+const MARKDOWN = /[*_[\]()#`~>|]/g;
+
+/** Untrusted text for the human summary: cleaned, one line, no double quotes, no markdown marks. */
 function shown(v: string, max: number): string {
-  return cleanText(v, max).replace(/"/g, "'");
+  return cleanText(cleanText(v, max).replace(MARKDOWN, " "), max).replace(/"/g, "'");
+}
+
+/** DGAJ22: true when the trade goes anywhere but https://degenly.app. */
+export function isCustomApiBase(apiBase: string | undefined): boolean {
+  return apiBase !== undefined && apiBase !== DEFAULT_API_BASE;
+}
+
+export function customApiWarning(apiBase: string): string {
+  return `WARNING: this trade is sent to ${apiBase}, not degenly.app.`;
 }
 
 export function confirmMessage(s: ConfirmSummary): string {
   const buy = s.side === "buy";
   const lines = [
+    ...(isCustomApiBase(s.apiBase) && s.apiBase !== undefined ? [customApiWarning(s.apiBase)] : []),
     `REAL TRADE with your agent wallet (real SOL, not demo). Check every line before you confirm.`,
     `Action: ${buy ? "BUY" : "SELL"}`,
     `Token mint (the only reliable identity of the token): ${s.mint}`,
@@ -81,7 +105,10 @@ export const CONFIRM_SCHEMA = {
  * Never throws: any failure of the elicitation (timeout, transport error, bad answer) → "declined".
  */
 export async function requestConfirmation(elicitor: Elicitor | undefined, s: ConfirmSummary, env: Readonly<Record<string, string | undefined>>): Promise<ConfirmOutcome> {
-  if ((env.DEGENLY_CONFIRM ?? "").trim().toLowerCase() === "off") return "skipped_off";
+  if ((env.DEGENLY_CONFIRM ?? "").trim().toLowerCase() === "off") {
+    // DGAJ22: no confirmation AND a foreign server together never trade (the human must see where it goes)
+    return isCustomApiBase(s.apiBase) ? "custom_api_off" : "skipped_off";
+  }
   if (!elicitor || !elicitor.supportsForm()) return "unsupported";
   try {
     const r = await elicitor.elicit(confirmMessage(s), CONFIRM_SCHEMA, CONFIRM_TIMEOUT_MS);

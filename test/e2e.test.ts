@@ -24,6 +24,7 @@ import { createMcpServer } from "../src/mcp.js";
 import { API_TERMS_VERSION, TERMS_VERSION, base58Decode, base58Encode, decodeAgentPairingCode } from "../src/sign.js";
 import { CONFIRM_FIELD } from "../src/tools/confirm.js";
 import { base64ToBytes, bytesToBase64, parseTxLayout } from "../src/tx.js";
+import { METIS_SOL_USDC_TX, rekey } from "./rekey.js";
 
 const NOW = 1791594000000;
 const OWNER = "7rhxnLV8C77o6d8oz26AgK8x8m5ePsdeRawjqvojbjnQ";
@@ -41,12 +42,13 @@ function edOk(address: string, msg: Uint8Array, sig: Uint8Array): boolean {
   return edVerify(null, msg, createPublicKey({ key: spki, format: "der", type: "spki" }), sig);
 }
 
-/** A minimal legacy Solana transaction with ONE signer (the agent) and one instruction; slot left empty. */
+/**
+ * DGAJ22: the REAL recorded Jupiter metis transaction re-keyed for the agent (./rekey.ts), slot left empty.
+ * (Before DGAJ22 this was a hand-built one-instruction tx with a made-up program; the package now refuses
+ * any program off the swap allow-list, so the e2e quotes the real bytes.)
+ */
 function unsignedTxFor(agent: string): Uint8Array {
-  const agentKey = base58Decode(agent) ?? new Uint8Array(32);
-  const program = new Uint8Array(32).fill(3);
-  const blockhash = new Uint8Array(32).fill(5);
-  return Uint8Array.from([1, ...new Uint8Array(64), 1, 0, 1, 2, ...agentKey, ...program, ...blockhash, 1, 1, 1, 0, 1, 9]);
+  return rekey(base64ToBytes(METIS_SOL_USDC_TX) ?? new Uint8Array(0), agent);
 }
 
 /** Fake Degenly: the /bot pairing step (site side) + the /v1 Bot API. */
@@ -60,7 +62,10 @@ function fakeDegenly() {
   const pairOnSite = (code: string, signedInOwner: string): { ok: true; apiKey: string } | { ok: false; error: string } => {
     const d = decodeAgentPairingCode(code);
     if (!d) return { ok: false, error: "PAIR_CODE_INVALID" };
-    const [agent, owner, nonce, ts, terms, apiTerms] = d.message.slice("degenly-agent-pair-v1:".length).split("|");
+    // DGAJ22 C-1: line 1 = the human sentence (must name the same owner), line 2 = the machine fields
+    const [human, machine = ""] = d.message.split("\n");
+    const [agent, owner, nonce, ts, terms, apiTerms] = machine.slice("degenly-agent-pair-v1:".length).split("|");
+    if (human !== `Degenly (degenly.app): pair this wallet as an AI agent of ${owner ?? ""}.`) return { ok: false, error: "PAIR_CODE_INVALID" };
     if (!agent || owner !== signedInOwner || !nonce || !/^[A-Za-z0-9_-]{16,64}$/.test(nonce)) return { ok: false, error: "PAIR_CODE_INVALID" };
     if (Math.abs(NOW - Number(ts)) > 600_000) return { ok: false, error: "PAIR_CODE_EXPIRED" };
     if (terms !== `terms:${TERMS_VERSION}` || apiTerms !== `apiTerms:${API_TERMS_VERSION}`) return { ok: false, error: "API_TERMS_REQUIRED" };

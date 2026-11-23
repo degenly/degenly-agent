@@ -23,17 +23,21 @@ const read = (f: string): string => readFileSync(join(ROOT, f), "utf8");
 const README = read("README.md");
 const SKILL = read("SKILL.md");
 const CLIENTS = read("docs/clients.md");
-const PKG = JSON.parse(read("package.json")) as { name: string; private: boolean; bin: Record<string, string>; scripts: Record<string, string> };
+const PKG = JSON.parse(read("package.json")) as { name: string; version: string; private: boolean; bin: Record<string, string>; scripts: Record<string, string>; files: string[] };
 
 const MINT = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263";
 const OWNER = "7rhxnLV8C77o6d8oz26AgK8x8m5ePsdeRawjqvojbjnQ";
 const NOW = 1791594000000;
 const REFUSED = ["UNKNOWN_COMMAND", "BAD_ARGS", "NOT_AVAILABLE_IN_DEMO"];
 
-/** DGAJ-S A2 "Kurulum metni" step 3, byte for byte. */
-const A2_CLAUDE_CODE = "claude mcp add degenly -- npx -y @degenly/agent";
-const A2_GEMINI_CLI = "gemini mcp add degenly npx -y @degenly/agent";
-const A2_JSON = { command: "npx", args: ["-y", "@degenly/agent"] };
+/** DGAJ22 (E-2): every documented npx command pins the package version (= package.json `version`). */
+const VERSION = "0.1.0";
+const PINNED = `@degenly/agent@${VERSION}`;
+
+/** DGAJ-S A2 "Kurulum metni" step 3, with the DGAJ22 pinned version. */
+const A2_CLAUDE_CODE = `claude mcp add degenly -- npx -y ${PINNED}`;
+const A2_GEMINI_CLI = `gemini mcp add degenly npx -y ${PINNED}`;
+const A2_JSON = { command: "npx", args: ["-y", PINNED] };
 
 // ---- extracting commands from a markdown file ---------------------------------------------------
 
@@ -56,7 +60,7 @@ function codeTexts(md: string): string[] {
   return out;
 }
 
-const PREFIXES = ["npx -y @degenly/agent", "node dist/cli.js", "degenly"];
+const PREFIXES = [`npx -y ${PINNED}`, "node dist/cli.js", "degenly"];
 
 /** Command lines of the package (argv after the program), as written in the doc (placeholders kept). */
 function commandLines(md: string): string[] {
@@ -169,14 +173,37 @@ describe("DGAJ17 docs: client install lines = DGAJ-S A2", () => {
     }
   });
 
-  it("`npx -y @degenly/agent` resolves to this package's CLI with no argument (= the MCP server)", () => {
+  it("`npx -y @degenly/agent@<version>` resolves to this package's CLI with no argument (= the MCP server)", () => {
     expect(PKG.name).toBe("@degenly/agent");
     // npx picks the bin named like the unscoped package name
     expect(PKG.bin.agent).toBe("dist/cli.js");
     expect(PKG.bin.degenly).toBe("dist/cli.js");
-    expect(A2_JSON.args.at(-1)).toBe(PKG.name);
+    expect(A2_JSON.args.at(-1)).toBe(`${PKG.name}@${PKG.version}`);
     expect(PKG.private).toBe(true);
     expect(Object.keys(PKG.scripts).filter((s) => /^(pre|post)install$|^prepare$/.test(s))).toEqual([]);
+  });
+
+  it("DGAJ22 E-2: every npx / args mention of the package in README, SKILL.md, docs/clients.md is pinned to package.json version", () => {
+    expect(PKG.version).toBe(VERSION);
+    let pinned = 0;
+    for (const [name, md] of [["README.md", README], ["SKILL.md", SKILL], ["docs/clients.md", CLIENTS]] as const) {
+      // `npx -y @degenly/agent` or a JSON args entry "@degenly/agent..." must carry @<version>
+      for (const m of md.matchAll(/npx -y (@degenly\/agent\S*)|"(@degenly\/agent[^"]*)"/g)) {
+        const spec = (m[1] ?? m[2] ?? "").replace(/[`,;).]+$/, "");
+        expect(spec, `${name}: ${m[0]}`).toBe(PINNED);
+        pinned++;
+      }
+    }
+    expect(pinned).toBeGreaterThanOrEqual(12);
+  });
+
+  it("DGAJ22 E-2: npm-shrinkwrap.json ships with the package and locks the same tree", () => {
+    expect(PKG.files).toContain("npm-shrinkwrap.json");
+    const sw = JSON.parse(read("npm-shrinkwrap.json")) as { name: string; version: string; lockfileVersion: number; packages: Record<string, { version?: string; dev?: boolean }> };
+    expect(sw.name).toBe(PKG.name);
+    expect(sw.version).toBe(PKG.version);
+    expect(sw.lockfileVersion).toBeGreaterThanOrEqual(2);
+    expect(sw.packages["node_modules/@modelcontextprotocol/sdk"]?.version).toBe("1.32.2");
   });
 
   it("no command is invented for clients the design could not verify (ChatGPT, Gemini web app)", () => {

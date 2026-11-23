@@ -9,8 +9,10 @@
  *      SELL: never limited (the server never limits sells either, botApi.ts:51).
  *   4. `/v1/quote` for the agent wallet → the transaction to sign comes ONLY from this answer (no tool argument
  *      carries transaction bytes; there is no "sign this" tool). The agent wallet must be one of its signers
- *      (TX_NOT_FOR_WALLET), checked before the human is asked.
+ *      (TX_NOT_FOR_WALLET) and (DGAJ22) the bytes must pass the local check ../tx.ts `checkAgentTx` (program
+ *      allow-list + no value out of the agent wallet to a foreign account), checked before the human is asked.
  *   5. the human confirms (./confirm.ts). Not accepted → nothing is signed, `/v1/execute` is never called.
+ *      DEGENLY_CONFIRM=off with a non-default DEGENLY_API_BASE → CUSTOM_API_NEEDS_CONFIRM (DGAJ22).
  *   6. sign the agent's slot (../tx.ts) → ONE `POST /v1/execute`. NO automatic retry: a network error / timeout
  *      answers EXECUTE_OUTCOME_UNKNOWN (the trade may have landed; a second send could buy twice).
  * Server refusals (SPEND_LIMIT, SPEND_LIMIT_NOT_SET, TOKEN_BLOCKED, TRADING_DISABLED, …) come back with the server's
@@ -19,7 +21,7 @@
 import type { Answer, LiveDeps } from "../cli.js";
 import { SOL_DECIMALS, SOL_MINT, formatUnits, parseSol } from "../demo/fill.js";
 import { untrustedName, untrustedSymbol } from "../sanitize.js";
-import { agentSlot, base64ToBytes, bytesToBase64, signTransactionFor } from "../tx.js";
+import { base64ToBytes, bytesToBase64, checkAgentTx, signTransactionFor } from "../tx.js";
 import { CONFIRM_OFF_HINT, requestConfirmation, type Elicitor } from "./confirm.js";
 import {
   API_PRIORITY_MAX_LAMPORTS,
@@ -41,6 +43,9 @@ export const TRADE_HINTS: Readonly<Record<string, string>> = {
   LOCAL_SPEND_LIMIT: "Above the spending limit set on degenly.app/bot (checked on this computer before anything was sent). Only the wallet owner can change it there.",
   TX_NOT_FOR_WALLET: "The quoted transaction is not for this agent wallet. Nothing was signed or sent.",
   TX_INVALID: "The quoted transaction could not be read with certainty. Nothing was signed or sent.",
+  TX_PROGRAM_NOT_ALLOWED: "The quoted transaction calls a program that is not on the swap allow-list (the same list degenly.app checks). Nothing was signed or sent.",
+  TX_UNEXPECTED_TRANSFER: "The quoted transaction would move funds from the agent wallet to an address the agent wallet does not own. Nothing was signed or sent.",
+  TX_INSTRUCTION_NOT_ALLOWED: "The quoted transaction asks the agent wallet for an instruction a swap never needs. Nothing was signed or sent.",
   CANCELLED: "The trade was not confirmed (declined, closed or timed out). Nothing was signed or sent.",
   CONFIRM_UNSUPPORTED: CONFIRM_OFF_HINT,
   EXECUTE_OUTCOME_UNKNOWN:
@@ -52,6 +57,11 @@ export const TRADE_HINTS: Readonly<Record<string, string>> = {
 function tradeError(error: string, extra: Record<string, unknown> = {}): Answer {
   const a = liveError(error, extra);
   return TRADE_HINTS[error] !== undefined && extra.hint === undefined ? { ...a, hint: TRADE_HINTS[error] } : a;
+}
+
+/** DGAJ22: DEGENLY_CONFIRM=off is not honoured for a non-default DEGENLY_API_BASE. */
+function customApiOffHint(base: string): string {
+  return `DEGENLY_API_BASE points to ${base}, not degenly.app, and DEGENLY_CONFIRM=off is set. Trades to another server always need the confirmation form, so nothing was signed or sent. Remove DEGENLY_API_BASE unless you set it yourself on purpose.`;
 }
 
 export interface LiveTrade {
@@ -127,9 +137,11 @@ export function createLiveTrade(d: LiveDeps, elicitor: () => Elicitor | undefine
     if (!q.tradingEnabled) return tradeError("TRADING_DISABLED", { ...named, ...facts });
     const bytes = q.transaction !== undefined ? base64ToBytes(q.transaction) : undefined;
     if (!bytes) return liveError("BAD_QUOTE");
-    const slot = agentSlot(bytes, ctx.wallet.address);
-    if (!slot.ok) return tradeError(slot.error);
-    // 5. the human confirms
+    // DGAJ22: the package's own check of the quoted bytes (allow-list + transfer rule), before the human is asked;
+    // signTransactionFor runs it again right before signing.
+    const checked = checkAgentTx(bytes, ctx.wallet.address);
+    if (!checked.ok) return tradeError(checked.error);
+    // 5. the human confirms (the summary names a non-default server on its first line)
     const outcome = await requestConfirmation(
       elicitor(),
       {
@@ -144,9 +156,11 @@ export function createLiveTrade(d: LiveDeps, elicitor: () => Elicitor | undefine
         networkSol: String(facts.networkSol),
         ...(q.slippagePct !== undefined ? { slippagePct: q.slippagePct } : {}),
         ...(q.priceImpactPct !== undefined ? { priceImpactPct: q.priceImpactPct } : {}),
+        apiBase: ctx.base,
       },
       d.env,
     );
+    if (outcome === "custom_api_off") return tradeError("CUSTOM_API_NEEDS_CONFIRM", { apiBase: ctx.base, hint: customApiOffHint(ctx.base) });
     if (outcome === "unsupported") return tradeError("CONFIRM_UNSUPPORTED", { ...named, ...facts });
     if (outcome === "declined") return tradeError("CANCELLED", { ...named, ...facts });
     // 6. sign + ONE execute (no retry)

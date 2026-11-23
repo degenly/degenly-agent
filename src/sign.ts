@@ -4,8 +4,9 @@
  *  1. Bot API request (degenly/src/edge/botApi.ts:26-29, `apiSigningMessage` :244-246, `authenticateApiRequest` :286-312):
  *       `degenly-api-v1:${METHOD}|${pathname + search}|${hex(sha256(body))}|${ts}`   (no body → sha256 of 0 bytes)
  *     Headers x-degenly-key (plain API key), x-degenly-ts (unix ms, |server − ts| ≤ 30 s), x-degenly-sig = base58(ed25519).
- *  2. Pairing code (degenly/src/api/pairing.ts:4-7, :43-54; parser :60-84):
- *       base58( UTF-8 `degenly-agent-pair-v1:<agent>|<owner>|<nonce>|<ts>|terms:<TERMS_VERSION>|apiTerms:<API_TERMS_VERSION>` ‖ 64-byte signature )
+ *  2. Pairing code (degenly/src/api/pairing.ts:4-7, :43-54; parser :60-84), DGAJ22 C-1 two-line text:
+ *       base58( UTF-8 `Degenly (degenly.app): pair this wallet as an AI agent of <owner>.` "\n"
+ *               `degenly-agent-pair-v1:<agent>|<owner>|<nonce>|<ts>|terms:<TERMS_VERSION>|apiTerms:<API_TERMS_VERSION>` ‖ 64-byte signature )
  *
  * The two prefixes differ (domain separation): a request signature can never be a pairing signature.
  * Only PUBLIC data leaves this file: an address, a message, a signature. The signer (./keys.ts) keeps the key.
@@ -18,6 +19,8 @@ export const TERMS_VERSION = "2026-10-9";
 export const API_TERMS_VERSION = "2026-10-1";
 /** Must equal `AGENT_PAIR_PREFIX` in degenly/src/config/apiConstants.ts:157. */
 export const AGENT_PAIR_PREFIX = "degenly-agent-pair-v1:";
+/** DGAJ22 C-1: the human-readable first line of the pairing text (followed by the owner wallet and "."). */
+export const AGENT_PAIR_HUMAN_PREFIX = "Degenly (degenly.app): pair this wallet as an AI agent of ";
 /** Must equal `API_SIGNING_PREFIX` in degenly/src/config/apiConstants.ts:101. */
 export const API_SIGNING_PREFIX = "degenly-api-v1:";
 /** Must equal degenly/src/config/apiConstants.ts:31-33. */
@@ -135,9 +138,14 @@ export interface AgentPairingFields {
   apiTermsVersion: string;
 }
 
-/** Byte-for-byte `agentPairingMessage` of degenly/src/api/pairing.ts:43-45. */
+/**
+ * Byte-for-byte `agentPairingMessage` of degenly/src/api/pairing.ts (DGAJ22 C-1: both repos change together).
+ * Two lines, one `\n` between them, no trailing line break. Line 1 is what the human reads in a wallet window:
+ *   `Degenly (degenly.app): pair this wallet as an AI agent of <ownerWallet>.`
+ *   `degenly-agent-pair-v1:<agent>|<owner>|<nonce>|<ts>|terms:<T>|apiTerms:<A>`
+ */
 export function agentPairingMessage(f: AgentPairingFields): string {
-  return `${AGENT_PAIR_PREFIX}${f.agentWallet}|${f.ownerWallet}|${f.nonce}|${f.ts}|terms:${f.termsVersion}|apiTerms:${f.apiTermsVersion}`;
+  return `${AGENT_PAIR_HUMAN_PREFIX}${f.ownerWallet}.\n${AGENT_PAIR_PREFIX}${f.agentWallet}|${f.ownerWallet}|${f.nonce}|${f.ts}|terms:${f.termsVersion}|apiTerms:${f.apiTermsVersion}`;
 }
 
 /** Byte-for-byte `encodeAgentPairingCode` of degenly/src/api/pairing.ts:48-54. */
@@ -156,7 +164,11 @@ export function decodeAgentPairingCode(code: string): { message: string; signatu
   if (!bytes || bytes.length <= SIGNATURE_BYTES) return undefined;
   try {
     const message = new TextDecoder("utf-8", { fatal: true }).decode(bytes.slice(0, bytes.length - SIGNATURE_BYTES));
-    return message.startsWith(AGENT_PAIR_PREFIX) ? { message, signature: bytes.slice(bytes.length - SIGNATURE_BYTES) } : undefined;
+    // DGAJ22 C-1: exactly two lines, the first one the human sentence; the old one-line text is not accepted
+    const [human, machine, ...rest] = message.split("\n");
+    if (rest.length !== 0 || human === undefined || machine === undefined || !machine.startsWith(AGENT_PAIR_PREFIX)) return undefined;
+    const owner = machine.slice(AGENT_PAIR_PREFIX.length).split("|")[1];
+    return owner !== undefined && human === `${AGENT_PAIR_HUMAN_PREFIX}${owner}.` ? { message, signature: bytes.slice(bytes.length - SIGNATURE_BYTES) } : undefined;
   } catch {
     return undefined;
   }

@@ -1,6 +1,6 @@
 # Client setup
 
-`@degenly/agent` is a local MCP stdio server. Every client below starts it with `npx -y @degenly/agent`.
+`@degenly/agent` is a local MCP stdio server. Every client below starts it with `npx -y @degenly/agent@0.1.0`.
 Live trading is not available yet; until it is, only the demo tools trade (demo SOL).
 
 How the confirmation step works in this package: before a live buy / sell is sent, the server asks the human with
@@ -13,7 +13,7 @@ documentation or tested it with this package.
 ## Claude Code
 
 ```
-claude mcp add degenly -- npx -y @degenly/agent
+claude mcp add degenly -- npx -y @degenly/agent@0.1.0
 ```
 
 Source: [Claude Code MCP](https://code.claude.com/docs/en/mcp).
@@ -28,7 +28,7 @@ Source: [Claude Code MCP](https://code.claude.com/docs/en/mcp).
 ## Gemini CLI
 
 ```
-gemini mcp add degenly npx -y @degenly/agent
+gemini mcp add degenly npx -y @degenly/agent@0.1.0
 ```
 
 Source: [gemini-cli mcp-server.md](https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md)
@@ -43,7 +43,7 @@ Source: [gemini-cli mcp-server.md](https://github.com/google-gemini/gemini-cli/b
 Add to `mcp.json`:
 
 ```json
-{ "mcpServers": { "degenly": { "command": "npx", "args": ["-y", "@degenly/agent"] } } }
+{ "mcpServers": { "degenly": { "command": "npx", "args": ["-y", "@degenly/agent@0.1.0"] } } }
 ```
 
 Source: [Cursor MCP](https://cursor.com/docs/context/mcp) (stdio servers; the page lists elicitation support).
@@ -56,7 +56,7 @@ Source: [Cursor MCP](https://cursor.com/docs/context/mcp) (stdio servers; the pa
 Add to `claude_desktop_config.json`:
 
 ```json
-{ "mcpServers": { "degenly": { "command": "npx", "args": ["-y", "@degenly/agent"] } } }
+{ "mcpServers": { "degenly": { "command": "npx", "args": ["-y", "@degenly/agent@0.1.0"] } } }
 ```
 
 Source: [MCP: connect local servers](https://modelcontextprotocol.io/docs/develop/connect-local-servers)

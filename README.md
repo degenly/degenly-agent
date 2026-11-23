@@ -12,19 +12,35 @@ Spending limits apply to trades made through Degenly. An agent that can read fil
 10 demo SOL, live Degenly prices, no wallet, no key, no account, no browser step.
 The demo record lives only on your computer in `~/.degenly/demo.json`; nothing about it is sent to Degenly.
 
-One command, no wallet: `npx -y @degenly/agent@0.1.1 demo status --json`
+One command, no wallet: `npx -y @degenly/agent@0.2.0 demo status --json`
 
 ## Live mode setup (3 steps)
 
-1. `npx -y @degenly/agent@0.1.1 setup --owner <main wallet address>`: creates the agent wallet on this computer
+1. `npx -y @degenly/agent@0.2.0 setup --owner <main wallet address>`: creates the agent wallet on this computer
    (`~/.degenly/agent-wallet.json`) and prints its address and a pairing code (valid 10 minutes, once).
 2. On degenly.app open `/bot`, sign in with your main wallet, choose "Pair agent" and paste the pairing code.
    The site shows an API key once. Fund the agent wallet with SOL only with what you can afford to lose.
-3. `npx -y @degenly/agent@0.1.1 login --key-file <path>`: stores the API key in `~/.degenly/credentials.json`
+3. `npx -y @degenly/agent@0.2.0 login --key-file <path>`: stores the API key in `~/.degenly/credentials.json`
    (or pipe the key on stdin to `login`; the key is never taken as a command argument).
 
-Check it: `npx -y @degenly/agent@0.1.1 whoami`. A new pairing code for the same wallet:
-`npx -y @degenly/agent@0.1.1 pair --owner <main wallet address>` (`setup` never overwrites an existing wallet).
+Check it: `npx -y @degenly/agent@0.2.0 whoami`. A new pairing code for the same wallet:
+`npx -y @degenly/agent@0.2.0 pair --owner <main wallet address>` (`setup` never overwrites an existing wallet).
+
+## Withdraw (SOL back to your main wallet)
+
+Funds can only go back to your paired main wallet. There is no other destination: no command or tool takes an
+address. `setup` / `pair --owner` record that main wallet on this computer (`~/.degenly/owner.json`); the package
+signs only a transaction that sends SOL from the agent wallet to exactly that address, even if the server says
+otherwise. Tokens are not withdrawn: sell first; only SOL is withdrawn.
+
+- `degenly withdraw <sol|all>`: run it yourself in your own terminal. It shows the amount and the full destination
+  address and asks you to type YES. It refuses without an interactive terminal or with `--json`
+  (`WITHDRAW_NEEDS_TERMINAL`).
+- An agent uses the MCP tool `degenly_live_withdraw` (`amountSol` or `all`), which always shows you a confirmation
+  form. `DEGENLY_CONFIRM=off` does not apply to withdrawals.
+- A wallet set up before withdrawals existed answers `OWNER_UNKNOWN`: run `degenly pair --owner <main wallet address>`
+  once to record it (no new pairing is needed just to record it).
+- No automatic retry: if the answer is `WITHDRAW_NOT_CONFIRMED`, check the agent wallet balance before trying again.
 
 ## Recovery phrase (12 words)
 
@@ -45,12 +61,12 @@ Anyone with the phrase can take the agent wallet's funds; never paste it into a 
 
 ## Add Degenly to your AI app (one line per client)
 
-- Claude Code: `claude mcp add degenly -- npx -y @degenly/agent@0.1.1`
-- Gemini CLI: `gemini mcp add degenly npx -y @degenly/agent@0.1.1`
+- Claude Code: `claude mcp add degenly -- npx -y @degenly/agent@0.2.0`
+- Gemini CLI: `gemini mcp add degenly npx -y @degenly/agent@0.2.0`
 - Cursor (`mcp.json`) / Claude Desktop (`claude_desktop_config.json`):
 
 ```json
-{ "mcpServers": { "degenly": { "command": "npx", "args": ["-y", "@degenly/agent@0.1.1"] } } }
+{ "mcpServers": { "degenly": { "command": "npx", "args": ["-y", "@degenly/agent@0.2.0"] } } }
 ```
 
 ChatGPT does not support local MCP servers, so it cannot use this package. The Gemini web app: not verified.
@@ -113,6 +129,7 @@ except `degenly_live_whoami`, which says what is missing):
 | `degenly_live_quote` | `degenly live quote <mint> buy <sol>` / `degenly live quote <mint> sell <N%\|all>` | real quote, nothing signed or sent |
 | `degenly_live_buy` | (MCP only) | buy by mint; you confirm first |
 | `degenly_live_sell` | (MCP only) | sell by mint; you confirm first |
+| `degenly_live_withdraw` | `degenly withdraw <sol\|all>` | SOL back to your paired main wallet only; you always confirm |
 
 Add `--json` to any CLI command for one-line JSON. Mint addresses only; names and symbols are refused.
 
@@ -140,6 +157,10 @@ Errors: non-zero exit (0 ok, 2 usage, 3 rate limited, 4 network / Degenly, 1 oth
 | `CANCELLED` / `CONFIRM_UNSUPPORTED` | you did not confirm, or the app cannot show the form: nothing sent |
 | `TRADING_DISABLED` / `TRADE_FAILED` | trading is off, or the trade did not complete |
 | `EXECUTE_OUTCOME_UNKNOWN` | sent, no answer: do NOT retry; check holdings and ledger first |
+| `OWNER_UNKNOWN` | withdraw: no main wallet recorded on this computer; run `pair --owner` once |
+| `WITHDRAW_NEEDS_TERMINAL` / `WITHDRAW_NOT_AVAILABLE` | withdraw: run it in your own terminal / not switched on on this server |
+| `TX_REFUSED` | withdraw: the prepared transaction was not exactly SOL to your paired main wallet; nothing signed |
+| `WITHDRAW_NOT_CONFIRMED` | withdraw: no confirmation came back; check the agent wallet balance before trying again |
 
 ## What goes over the network
 

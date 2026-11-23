@@ -18,6 +18,7 @@
  */
 import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
+import { createInterface } from "node:readline/promises";
 import { pathToFileURL } from "node:url";
 import { CREDENTIALS_PATH_TEXT, API_KEY_DISPLAY_CHARS, KEY_INPUT_MAX_BYTES, LIVE_NOT_AVAILABLE, createLiveClient, liveHint, loadCredentials, plausibleApiKey, resolveApiBase, saveCredentials } from "./client.js";
 import { AGENT_WALLET_WARNING, RECOVERY_PATH_TEXT, RECOVERY_SETUP_TEXT, WALLET_PATH_TEXT, createWallet, loadWallet, recoveryWords, resolveHome, restoreWallet } from "./keys.js";
@@ -44,8 +45,9 @@ import { SOL_DECIMALS, SOL_MINT, demoFill, demoNetworkLamports, formatUnits, par
 import { DEMO_START_LAMPORTS, loadDemo, resetDemo, saveDemo, type DemoStateV1 } from "./demo/store.js";
 import { SYMBOL_MAX_CHARS, cleanText, isMint, showUntrusted, untrustedName, untrustedSymbol, type UntrustedText } from "./sanitize.js";
 import { createLiveRead } from "./tools/live-read.js";
+import { OWNER_PATH_TEXT, createLiveWithdraw, saveOwner, terminalConfirm } from "./tools/live-withdraw.js";
 
-export const VERSION = "0.1.1";
+export const VERSION = "0.2.0";
 export const DEMO_NOTE = "Demo trade. No real funds moved.";
 export const LIVE_NOTICE = "Demo mode: 10 demo SOL, live prices, record kept only on this computer (~/.degenly/demo.json). For live mode the human runs: degenly setup --owner <main wallet address>";
 export const RECORD_PATH_TEXT = "~/.degenly/demo.json";
@@ -484,6 +486,8 @@ export const USAGE = [
   "  degenly live ledger [--limit N]           confirmed Degenly trades of the agent wallet",
   "  degenly live quote <mint> buy <sol>       real quote, nothing signed or sent",
   "  degenly live quote <mint> sell <N%|all>",
+  "  degenly withdraw <sol|all>                send SOL from the agent wallet back to your paired main wallet (you type YES)",
+  "  Funds can only go back to your paired main wallet. Tokens are not withdrawn: sell first; only SOL is withdrawn.",
   "",
   "Recovery phrase (12 words, made and kept only on this computer; Degenly never sees or stores your recovery phrase):",
   "  degenly recovery-phrase                   show the 12 words: only you, in your own terminal (never for an agent)",
@@ -602,6 +606,11 @@ export interface LiveDeps {
    * Absent = false: the recovery phrase is then never shown (tests, MCP, an agent's shell tool).
    */
   interactive?: () => boolean;
+  /**
+   * DGAJ30: prints `question` to the terminal and returns the line typed (`degenly withdraw` only, after
+   * `interactive()`). Absent = no terminal prompt possible: the withdrawal is refused.
+   */
+  promptLine?: (question: string) => Promise<string>;
 }
 
 function liveOk(fields: Record<string, unknown>): Answer {
@@ -612,12 +621,14 @@ function liveFail(error: string, extra: Record<string, unknown> = {}): Answer {
   return { ok: false, mode: "live", note: LIVE_NOTE, error, hint: liveHint(error), ...extra };
 }
 
-function pairingAnswer(wallet: Signer, owner: string, now: number, created: boolean): Answer {
+function pairingAnswer(wallet: Signer, owner: string, now: number, created: boolean, ownerRecorded: boolean): Answer {
   const { code } = createPairingCode(wallet, owner, now);
   return liveOk({
     created,
     address: wallet.address,
     ownerWallet: owner,
+    // DGAJ30: the only place a withdrawal may go (`degenly withdraw` / degenly_live_withdraw read it)
+    ...(ownerRecorded ? { ownerFile: OWNER_PATH_TEXT } : { ownerFile: "not written", ownerWarning: `Could not write ${OWNER_PATH_TEXT}; withdrawals answer OWNER_UNKNOWN until pair --owner succeeds.` }),
     pairingCode: code,
     pairingCodeValidMs: API_PAIR_TS_SKEW_MS,
     walletFile: WALLET_PATH_TEXT,
@@ -642,7 +653,7 @@ async function liveSetup(d: LiveDeps, owner: string | undefined): Promise<Answer
     const l = loadWallet(d.home);
     return liveFail("WALLET_EXISTS", l.ok ? { address: l.wallet.address } : {});
   }
-  return pairingAnswer(c.wallet, owner, d.now(), true);
+  return pairingAnswer(c.wallet, owner, d.now(), true, saveOwner(d.home, owner));
 }
 
 async function livePair(d: LiveDeps, owner: string | undefined): Promise<Answer> {
@@ -651,7 +662,7 @@ async function livePair(d: LiveDeps, owner: string | undefined): Promise<Answer>
   if (!l.ok) return liveFail(l.error);
   const bad = ownerError(owner, l.wallet.address);
   if (bad || owner === undefined) return bad ?? liveFail("BAD_OWNER");
-  return pairingAnswer(l.wallet, owner, d.now(), false);
+  return pairingAnswer(l.wallet, owner, d.now(), false, saveOwner(d.home, owner));
 }
 
 async function liveLogin(d: LiveDeps, p: Parsed): Promise<Answer> {
@@ -799,6 +810,12 @@ export async function runCli(argv: string[], ops: Ops, live?: LiveDeps): Promise
     return rp.ok ? { code: 0, out: rp.text } : done("recovery-phrase", rp.answer);
   }
   if (live && c0 === "recover") return done("recover", await liveRecover(live, p));
+  // DGAJ30: SOL back to the paired main wallet; the human types YES in their own terminal (never --json / an agent shell)
+  if (live && c0 === "withdraw") {
+    if (!args(2, r)) return done("withdraw", liveFail("BAD_ARGS", { hint: "Usage: degenly withdraw <sol|all>" }));
+    if (p.json || live.interactive?.() !== true || live.promptLine === undefined) return done("withdraw", liveFail("WITHDRAW_NEEDS_TERMINAL"));
+    return done("withdraw", await createLiveWithdraw(live).withdraw(c1 ?? "", terminalConfirm(live.promptLine)));
+  }
   if (live && c0 === "whoami") return done("whoami", args(1, r) ? await liveWhoami(live) : liveFail("BAD_ARGS", { hint: "Usage: degenly whoami" }));
   // DGAJ16: live READ commands only (a live buy / sell needs the human confirmation form: MCP only)
   if (live && c0 === "live") {
@@ -808,7 +825,7 @@ export async function runCli(argv: string[], ops: Ops, live?: LiveDeps): Promise
     if (c1 === "quote" && args(5, r)) return done("live quote", await read.quote(c2 ?? "", c3 ?? "", c4 ?? ""));
     return done("live", liveFail("BAD_ARGS", { hint: "Usage: degenly live holdings | live ledger [--limit N] | live quote <mint> buy <sol> | live quote <mint> sell <N%|all>" }));
   }
-  if (c0 === "setup" || c0 === "login" || c0 === "live" || c0 === "pair" || c0 === "whoami" || c0 === "recover" || c0 === "recovery-phrase") return done(c0, fail("NOT_AVAILABLE_IN_DEMO"));
+  if (c0 === "setup" || c0 === "login" || c0 === "live" || c0 === "pair" || c0 === "whoami" || c0 === "recover" || c0 === "recovery-phrase" || c0 === "withdraw") return done(c0, fail("NOT_AVAILABLE_IN_DEMO"));
 
   if (c0 === "demo") {
     if (c1 === "status" && args(2, r)) return done("status", await ops.status());
@@ -868,7 +885,19 @@ export function defaultLive(): LiveDeps {
     now: () => Date.now(),
     readStdin: readPipedStdin,
     interactive: () => process.stdout.isTTY === true && process.stdin.isTTY === true,
+    promptLine: promptTerminalLine,
   };
+}
+
+/** DGAJ30: one line typed in the interactive terminal (`degenly withdraw` only; never used for a secret). */
+async function promptTerminalLine(question: string): Promise<string> {
+  if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) return "";
+  const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+  try {
+    return await rl.question(question);
+  } finally {
+    rl.close();
+  }
 }
 
 async function main(argv: string[]): Promise<void> {
@@ -876,7 +905,8 @@ async function main(argv: string[]): Promise<void> {
   if (argv.length === 0 || (argv.length === 1 && argv[0] === "mcp")) {
     const { startMcpStdio } = await import("./mcp.js");
     // DGAJ29: inside MCP the recovery phrase is never shown (no tool exists for it; the flag closes the CLI path too)
-    await startMcpStdio(ops, { ...defaultLive(), interactive: () => false });
+    // DGAJ30: no terminal prompt inside MCP (a withdrawal there goes through the confirmation form only)
+    await startMcpStdio(ops, { ...defaultLive(), interactive: () => false, promptLine: undefined });
     return;
   }
   const r = await runCli(argv, ops, defaultLive());

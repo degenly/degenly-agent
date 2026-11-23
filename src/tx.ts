@@ -395,6 +395,61 @@ export function signTransactionFor(tx: Uint8Array, signer: Signer): TxSignResult
   return { ok: true, signed: out, slot: at.slot, layout: at.layout };
 }
 
+// ---- DGAJ30: the withdrawal shape ------------------------------------------------------------------
+
+/**
+ * Why a `/v1/withdraw/prepare` transaction is refused. Same names as the server's own send check
+ * (degenly/src/edge/agentWithdrawApi.ts:134 `AgentTxRefusal`, read only) minus "signature" (nothing is signed yet).
+ */
+export type WithdrawTxRefusal = "malformed" | "versioned" | "signer" | "instructions" | "source" | "destination";
+export type WithdrawTxCheck = { ok: true; lamports: bigint; layout: TxLayout } | { ok: false; reason: WithdrawTxRefusal };
+
+/**
+ * DGAJ30: may the agent wallet sign this withdrawal? Pure, no network. The destination is the caller's LOCAL
+ * owner record (~/.degenly/owner.json), never a field of the server's answer. All of these, or nothing is signed
+ * (the same four rules the server applies on send, agentWithdrawApi.ts:168-224):
+ *   legacy message only (v0 / lookup tables → "versioned"); exactly ONE signature slot, ONE required signer =
+ *   the agent wallet at key 0, writable ("signer"); exactly ONE instruction = System Program Transfer
+ *   (u32 LE 2 ‖ u64 LE lamports, two accounts, lamports > 0) ("instructions"); source = the agent ("source");
+ *   destination = `owner`, a writable non-signer account ("destination").
+ */
+export function checkWithdrawTx(tx: Uint8Array, agent: string, owner: string): WithdrawTxCheck {
+  const no = (reason: WithdrawTxRefusal): WithdrawTxCheck => ({ ok: false, reason });
+  const layout = parseTxLayout(tx);
+  if (!layout) return no("malformed");
+  if (layout.version !== "legacy") return no("versioned");
+  const { keys, instructions } = layout;
+  if (new Set(keys).size !== keys.length) return no("malformed");
+  const readonlySigned = tx[layout.messageOffset + 1];
+  const readonlyUnsigned = tx[layout.messageOffset + 2];
+  if (readonlySigned === undefined || readonlyUnsigned === undefined) return no("malformed");
+  if (layout.numSignatures !== 1 || layout.requiredSignatures !== 1 || readonlySigned !== 0 || keys[0] !== agent) return no("signer");
+  const ix = instructions.length === 1 ? instructions[0] : undefined;
+  if (!ix || keys[ix.programIndex] !== SYSTEM_PROGRAM || ix.accounts.length !== 2 || ix.data.length !== 12 || u32(ix.data, 0) !== 2) return no("instructions");
+  const lamports = u64(ix.data, 4);
+  if (lamports === undefined || lamports <= 0n) return no("instructions");
+  const [src, dst] = ix.accounts;
+  if (src !== 0) return no("source");
+  if (dst === undefined || dst === 0 || keys[dst] !== owner || dst >= keys.length - readonlyUnsigned) return no("destination");
+  return { ok: true, lamports, layout };
+}
+
+/**
+ * DGAJ30: the agent wallet's signature in slot 0 of a withdrawal, ONLY after `checkWithdrawTx` passes for `owner`
+ * and the transfer is exactly `lamports`. Like `signTransactionFor`, this is not a "sign any bytes" export: a
+ * transaction of any other shape is refused and nothing is signed.
+ */
+export function signWithdrawFor(tx: Uint8Array, signer: Signer, owner: string, lamports: bigint): { ok: true; signed: Uint8Array } | { ok: false; reason: WithdrawTxRefusal | "amount" } {
+  const c = checkWithdrawTx(tx, signer.address, owner);
+  if (!c.ok) return c;
+  if (c.lamports !== lamports) return { ok: false, reason: "amount" };
+  const out = new Uint8Array(tx);
+  const sig = signer.sign(out.subarray(c.layout.messageOffset));
+  if (sig.length !== 64) return { ok: false, reason: "malformed" };
+  out.set(sig, c.layout.slotsOffset);
+  return { ok: true, signed: out };
+}
+
 const B64 = /^[A-Za-z0-9+/]+={0,2}$/;
 
 /** Strict base64 → bytes (undefined for anything else). */

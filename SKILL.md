@@ -45,6 +45,10 @@ $ degenly demo buy bonk 0.1 --json        # exit code 2
    `degenly_live_ledger`, `degenly_live_quote` (nothing signed or sent), `degenly_live_buy`, `degenly_live_sell`.
    On the CLI there is no live buy / sell: only `degenly live holdings`, `degenly live ledger [--limit N]` and
    `degenly live quote <mint> buy <sol>` / `degenly live quote <mint> sell <N%|all>`.
+4. Withdraw: `degenly_live_withdraw` (`amountSol` or `all: true`) sends SOL from the agent wallet back to the
+   human's paired main wallet. Funds can only go back to your paired main wallet; it takes no address. Tokens are
+   not withdrawn: sell first; only SOL is withdrawn. Use it only when the human asks; the human always confirms a
+   form. `degenly withdraw <sol|all>` is for the human in their own terminal (it answers `WITHDRAW_NEEDS_TERMINAL` to you).
 
 ## Rules
 
@@ -89,6 +93,8 @@ Read `hint` first. Then:
 | `CONFIRM_UNSUPPORTED` | this app cannot show the form; nothing was sent; pass the hint to the human, do not change any setting |
 | `TRADING_DISABLED` / `TRADE_FAILED` | nothing completed; get a new quote only if the human asks again |
 | `EXECUTE_OUTCOME_UNKNOWN` | do NOT retry; check `degenly_live_holdings` and `degenly_live_ledger`, then tell the human |
+| `OWNER_UNKNOWN` / `WITHDRAW_NEEDS_TERMINAL` / `WITHDRAW_NOT_AVAILABLE` / `TX_REFUSED` | withdraw: nothing was sent; pass the hint to the human (never look for another destination) |
+| `WITHDRAW_NOT_CONFIRMED` | do NOT retry; check `degenly_live_holdings` (the agent wallet balance), then tell the human |
 | `LOW_SOL` / `NO_HOLD` | demo: not enough demo SOL (`demo reset`) / no demo position |
 | `TOKEN_NOT_FOUND` / `NO_ROUTE` / `TOO_SMALL` | unknown mint / no route now / amount too small |
 

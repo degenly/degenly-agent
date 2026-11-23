@@ -234,6 +234,18 @@ export const LIVE_HINTS: Readonly<Record<string, string>> = {
   PHRASE_WORD_COUNT: "A Degenly agent wallet recovery phrase has exactly 12 words, separated by spaces.",
   PHRASE_UNKNOWN_WORD: "One of the words is not in the BIP39 English word list. Check the spelling against what you wrote down; nothing is guessed.",
   PHRASE_CHECKSUM: "The 12 words are valid words but not a valid recovery phrase (checksum). Check the order and spelling; nothing is guessed.",
+  // DGAJ30: withdraw (funds can only go back to the paired main wallet)
+  OWNER_UNKNOWN:
+    "This computer has no record of your paired main wallet, so nothing can be withdrawn. Run: degenly pair --owner <main wallet address> (no new pairing is needed just to record it)",
+  WITHDRAW_NOT_AVAILABLE: "Withdrawals are not switched on yet on this server.",
+  WITHDRAW_NEEDS_TERMINAL:
+    "degenly withdraw runs only in your own interactive terminal (no --json) and asks you to type YES. An agent uses the MCP tool degenly_live_withdraw instead, which shows you a confirmation form.",
+  NOTHING_TO_WITHDRAW: "The agent wallet has no SOL left to withdraw after the network fee.",
+  INSUFFICIENT_BALANCE: "The agent wallet does not hold that much SOL plus the network fee (see balanceLamports, feeLamports).",
+  DESTINATION_NOT_ALLOWED: "A withdrawal never names a destination: funds can only go back to your paired main wallet.",
+  OWNER_IS_AGENT: "The paired main wallet is the agent wallet itself. Pair again with your main wallet.",
+  NOT_AN_AGENT_KEY: "This API key is not a paired agent key. Pair the agent on degenly.app/bot and run degenly login.",
+  SIMULATION_FAILED: "The network simulation of the withdrawal failed. Nothing was signed or sent. Check the balance and retry later.",
 };
 
 export function liveHint(code: string): string {

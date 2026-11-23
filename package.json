@@ -1,6 +1,6 @@
 {
   "name": "@degenly/agent",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Degenly for AI agents: MCP server + CLI to look up and trade Solana tokens on Degenly. Demo mode needs no wallet; live mode uses a separate local agent wallet.",
   "type": "module",
   "license": "MIT",

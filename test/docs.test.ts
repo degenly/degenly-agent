@@ -31,7 +31,7 @@ const NOW = 1791594000000;
 const REFUSED = ["UNKNOWN_COMMAND", "BAD_ARGS", "NOT_AVAILABLE_IN_DEMO"];
 
 /** DGAJ22 (E-2): every documented npx command pins the package version (= package.json `version`). */
-const VERSION = "0.1.1";
+const VERSION = "0.2.0";
 const PINNED = `@degenly/agent@${VERSION}`;
 
 /** DGAJ-S A2 "Kurulum metni" step 3, with the DGAJ22 pinned version. */
@@ -135,7 +135,7 @@ describe("DGAJ17 docs: every documented command is a real command", () => {
   it("README.md: all command lines parse (setup, pair, login, whoami, live ..., demo ..., token, search, trending, mcp)", async () => {
     const lines = commandLines(README);
     // the extraction itself must keep finding the documented commands (an empty list would pass silently)
-    for (const must of ["setup --owner <main wallet address>", "login --key-file <path>", "whoami", "pair --owner <main wallet address>", "demo status --json", "live holdings", "live quote <mint> buy <sol>", "demo buy <mint> <sol>", "trending [5m|1h|6h|24h] [--limit N]", "mcp", "recovery-phrase", "recover --phrase-file <path>", "recover"]) {
+    for (const must of ["setup --owner <main wallet address>", "login --key-file <path>", "whoami", "pair --owner <main wallet address>", "demo status --json", "live holdings", "live quote <mint> buy <sol>", "demo buy <mint> <sol>", "trending [5m|1h|6h|24h] [--limit N]", "mcp", "recovery-phrase", "recover --phrase-file <path>", "recover", "withdraw <sol|all>"]) {
       expect(lines, must).toContain(must);
     }
     const ran = await checkRecognized("README.md", lines);
@@ -146,7 +146,7 @@ describe("DGAJ17 docs: every documented command is a real command", () => {
   it("SKILL.md: all command lines parse; the file stays within 110 lines", async () => {
     expect(SKILL.split("\n").length).toBeLessThanOrEqual(110);
     const lines = commandLines(SKILL);
-    for (const must of ["search bonk --json", "demo buy <mint> 0.1 --json", "setup --owner <main wallet address>", "login --key-file <path>", "live holdings", "help", "recovery-phrase", "recover"]) {
+    for (const must of ["search bonk --json", "demo buy <mint> 0.1 --json", "setup --owner <main wallet address>", "login --key-file <path>", "live holdings", "help", "recovery-phrase", "recover", "withdraw <sol|all>"]) {
       expect(lines, must).toContain(must);
     }
     await checkRecognized("SKILL.md", lines);
@@ -262,6 +262,17 @@ describe("DGAJ17 docs: safety text", () => {
     expect(RECOVERY_SETUP_TEXT).toContain("`degenly recovery-phrase`");
     expect(README).toContain("NO_RECOVERY_PHRASE");
     expect(README).toContain("m/44'/501'/0'/0'");
+  });
+
+  it("DGAJ30: README, SKILL.md and USAGE name withdraw, the only-main-wallet sentence and the sell-first sentence", () => {
+    for (const [name, text] of [["README.md", README], ["SKILL.md", SKILL], ["USAGE", USAGE]] as const) {
+      expect(text, name).toContain("degenly withdraw <sol|all>");
+      expect(text, name).toMatch(/funds can only go back to your paired main wallet/i);
+      expect(text, name).toContain("sell first; only SOL is withdrawn");
+    }
+    for (const [name, text] of [["README.md", README], ["SKILL.md", SKILL]] as const) expect(text, name).toContain("degenly_live_withdraw");
+    expect(README).toContain("OWNER_UNKNOWN");
+    expect(README).toContain("~/.degenly/owner.json");
   });
 
   it("package texts: no exchange / custody / payment wording, no return promises", () => {

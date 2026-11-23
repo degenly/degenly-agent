@@ -218,14 +218,15 @@ describe("DGAJ16 tools/list", () => {
     await client.close();
   });
 
-  it("paired + login: demo tool names unchanged + the 8 live tools; no sign / transfer / export tool exists", async () => {
+  it("paired + login: demo tool names unchanged + the 9 live tools; no sign / transfer / export tool exists", async () => {
     const r = rig();
     const m = await mcp(r);
     const names = (await m.client.listTools()).tools.map((t) => t.name);
     expect(names.slice(0, TOOL_NAMES.length)).toEqual(["degenly_status", "degenly_quote", "degenly_buy", "degenly_sell", "degenly_trades", "degenly_reset", "degenly_token", "degenly_search", "degenly_trending"]);
-    expect(names.slice(TOOL_NAMES.length)).toEqual(["degenly_live_whoami", "degenly_live_token", "degenly_live_price", "degenly_live_holdings", "degenly_live_ledger", "degenly_live_quote", "degenly_live_buy", "degenly_live_sell"]);
+    expect(names.slice(TOOL_NAMES.length)).toEqual(["degenly_live_whoami", "degenly_live_token", "degenly_live_price", "degenly_live_holdings", "degenly_live_ledger", "degenly_live_quote", "degenly_live_buy", "degenly_live_sell", "degenly_live_withdraw"]);
     expect([...LIVE_TOOL_NAMES].sort()).toEqual(names.slice(TOOL_NAMES.length).sort());
-    expect(names.filter((n) => /sign|transfer|export|key|seed|withdraw/i.test(n))).toEqual([]);
+    // DGAJ30: the one SOL-out tool is degenly_live_withdraw (no destination argument: test/withdraw.test.ts)
+    expect(names.filter((n) => /sign|transfer|export|key|seed|withdraw/i.test(n))).toEqual(["degenly_live_withdraw"]);
     // no live tool takes transaction bytes / a confirm switch as input
     for (const t of (await m.client.listTools()).tools) {
       expect(Object.keys((t.inputSchema.properties ?? {}) as Record<string, unknown>).filter((k) => /transaction|tx|confirm|sign/i.test(k))).toEqual([]);

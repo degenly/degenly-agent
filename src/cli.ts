@@ -561,7 +561,8 @@ const args = (n: number, r: string[]): boolean => r.length === n;
 
 export const LIVE_NOTE = "Live mode. The agent wallet key stays on this computer and is never sent.";
 export const PAIR_NEXT_STEP =
-  "Open degenly.app/bot, sign in with your main wallet, choose Pair agent and paste the pairing code (valid 10 minutes, once). Send SOL to the agent wallet address, then run: degenly login (API key on stdin, or --key-file <path>).";
+  "Open degenly.app/bot, sign in with your main wallet, choose Pair agent and paste the pairing code (valid 10 minutes, once), then run: degenly login (API key on stdin, or --key-file <path>). " +
+  `${LIVE_NOT_AVAILABLE} Do not fund the agent wallet until live trading is available.`;
 /** Max wait for piped stdin at `login` (never a prompt: a terminal stdin is not read at all). */
 export const STDIN_WAIT_MS = 5_000;
 
@@ -594,6 +595,7 @@ function pairingAnswer(wallet: Signer, owner: string, now: number, created: bool
     pairingCodeValidMs: API_PAIR_TS_SKEW_MS,
     walletFile: WALLET_PATH_TEXT,
     warning: AGENT_WALLET_WARNING,
+    liveTrading: LIVE_NOT_AVAILABLE,
     next: PAIR_NEXT_STEP,
   });
 }

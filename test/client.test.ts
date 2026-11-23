@@ -205,6 +205,11 @@ describe("DGAJ15 CLI: setup", () => {
     expect(s.out).toContain(AGENT_WALLET_WARNING);
     expect(String(a.next)).toContain("degenly.app/bot");
     expect(String(a.next)).toContain("Pair agent");
+    // DGAJ15 fix 1: no live trade command yet -> setup must not steer the user into funding the wallet
+    expect(a.liveTrading).toBe(LIVE_NOT_AVAILABLE);
+    expect(String(a.next)).toContain(LIVE_NOT_AVAILABLE);
+    expect(String(a.next)).not.toMatch(/send sol/i);
+    expect(s.out).not.toMatch(/send sol/i);
     const d = decodeAgentPairingCode(String(a.pairingCode));
     expect(d?.message.startsWith(`degenly-agent-pair-v1:${String(a.address)}|${OWNER}|`)).toBe(true);
     const key = await webcrypto.subtle.importKey("raw", base58Decode(String(a.address)) ?? new Uint8Array(0), { name: "Ed25519" }, false, ["verify"]);
@@ -215,6 +220,8 @@ describe("DGAJ15 CLI: setup", () => {
     expect(h.code).toBe(0);
     expect(h.out).toContain(AGENT_WALLET_WARNING);
     expect(h.out).toContain("LIVE");
+    expect(h.out).toContain(LIVE_NOT_AVAILABLE);
+    expect(h.out).not.toMatch(/send sol/i);
     // no network at setup
     expect(r.server.calls).toHaveLength(0);
   });
@@ -230,6 +237,8 @@ describe("DGAJ15 CLI: setup", () => {
     const p = JSON.parse((await r.cli(["pair", "--owner", OWNER, "--json"])).out) as Record<string, unknown>;
     expect(p).toMatchObject({ ok: true, mode: "live", address: first.address, warning: AGENT_WALLET_WARNING });
     expect(p.pairingCode).not.toBe(first.pairingCode);
+    expect(p.liveTrading).toBe(LIVE_NOT_AVAILABLE);
+    expect(String(p.next)).not.toMatch(/send sol/i);
     expect(readFileSync(walletPath(r.home)).equals(bytes)).toBe(true);
   });
 

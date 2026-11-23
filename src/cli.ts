@@ -20,7 +20,8 @@ import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { CREDENTIALS_PATH_TEXT, API_KEY_DISPLAY_CHARS, KEY_INPUT_MAX_BYTES, LIVE_NOT_AVAILABLE, createLiveClient, liveHint, loadCredentials, plausibleApiKey, resolveApiBase, saveCredentials } from "./client.js";
-import { AGENT_WALLET_WARNING, WALLET_PATH_TEXT, createWallet, loadWallet, resolveHome } from "./keys.js";
+import { AGENT_WALLET_WARNING, RECOVERY_PATH_TEXT, RECOVERY_SETUP_TEXT, WALLET_PATH_TEXT, createWallet, loadWallet, recoveryWords, resolveHome, restoreWallet } from "./keys.js";
+import { RECOVERY_WORD_COUNT, splitPhrase, wordsToEntropy } from "./mnemonic.js";
 import { API_PAIR_TS_SKEW_MS, createPairingCode, isSolanaAddress, type Signer } from "./sign.js";
 import {
   QUOTE_DAILY_MAX,
@@ -94,7 +95,7 @@ const HINTS: Readonly<Record<string, string>> = {
 /** 0 ok · 2 usage · 3 rate limited · 4 network / Degenly side · 1 any other refusal. */
 export function exitCodeFor(error: string | undefined): number {
   if (error === undefined) return 0;
-  if (["BAD_ARGS", "UNKNOWN_COMMAND", "MINT_REQUIRED", "BAD_AMOUNT", "BAD_PERCENT", "TOO_SMALL", "BAD_OWNER", "KEY_ARG_REFUSED", "NO_KEY_INPUT", "KEY_FORMAT", "BAD_API_BASE", "BAD_DEGENLY_HOME"].includes(error)) return 2;
+  if (["BAD_ARGS", "UNKNOWN_COMMAND", "MINT_REQUIRED", "BAD_AMOUNT", "BAD_PERCENT", "TOO_SMALL", "BAD_OWNER", "KEY_ARG_REFUSED", "NO_KEY_INPUT", "KEY_FORMAT", "BAD_API_BASE", "BAD_DEGENLY_HOME", "PHRASE_ARG_REFUSED", "NO_PHRASE_INPUT"].includes(error)) return 2;
   if (error === "RATE_LIMITED") return 3;
   if (["NETWORK", "BAD_RESPONSE", "UPSTREAM", "MISSING_KEY", "NOT_CONFIGURED", "CROSS_SITE"].includes(error) || error.startsWith("HTTP_")) return 4;
   return 1;
@@ -484,6 +485,11 @@ export const USAGE = [
   "  degenly live quote <mint> buy <sol>       real quote, nothing signed or sent",
   "  degenly live quote <mint> sell <N%|all>",
   "",
+  "Recovery phrase (12 words, made and kept only on this computer; Degenly never sees or stores your recovery phrase):",
+  "  degenly recovery-phrase                   show the 12 words: only you, in your own terminal (never for an agent)",
+  "  degenly recover [--phrase-file <path>]    rebuild the agent wallet from the 12 words on stdin or a file",
+  "  Anyone with the phrase can take the agent wallet's funds; never paste it into a chat or give it to an agent.",
+  "",
   "Add --json for one-line JSON. Mint addresses only; coin names are untrusted text.",
   "Live buy / sell: MCP tools degenly_live_buy / degenly_live_sell only (the human confirms each trade).",
 ].join("\n");
@@ -495,6 +501,10 @@ interface Parsed {
   keyFile?: string;
   /** a `--key` / `--api-key` style flag was given: refused, its value is never used or echoed */
   keyArg: boolean;
+  /** DGAJ29: `recover --phrase-file <path>` */
+  phraseFile?: string;
+  /** DGAJ29: a `--phrase` / `--mnemonic` / `--words` / `--seed` style flag: refused, its value never used or echoed */
+  phraseArg: boolean;
   rest: string[];
   bad?: string;
 }
@@ -506,7 +516,7 @@ function flagValue(argv: string[], i: number): string | undefined {
 }
 
 function parseArgs(argv: string[]): Parsed {
-  const out: Parsed = { json: false, keyArg: false, rest: [] };
+  const out: Parsed = { json: false, keyArg: false, phraseArg: false, rest: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] ?? "";
     if (a === "--json") out.json = true;
@@ -525,7 +535,15 @@ function parseArgs(argv: string[]): Parsed {
       else out.keyFile = v ?? "";
     } else if (a.startsWith("--owner=")) out.owner = a.slice("--owner=".length);
     else if (a.startsWith("--key-file=")) out.keyFile = a.slice("--key-file=".length);
-    else if (/^--(api-?)?key(=|$)/.test(a)) {
+    else if (a === "--phrase-file") {
+      const v = flagValue(argv, i);
+      if (v !== undefined) i++;
+      out.phraseFile = v ?? "";
+    } else if (a.startsWith("--phrase-file=")) out.phraseFile = a.slice("--phrase-file=".length);
+    else if (/^--(phrase|mnemonic|words|seed|recovery-phrase|secret)(=|$)/.test(a)) {
+      out.phraseArg = true;
+      if (!a.includes("=") && flagValue(argv, i) !== undefined) i++;
+    } else if (/^--(api-?)?key(=|$)/.test(a)) {
       out.keyArg = true;
       if (!a.includes("=") && flagValue(argv, i) !== undefined) i++;
     } else out.rest.push(a);
@@ -579,6 +597,11 @@ export interface LiveDeps {
   now: () => number;
   /** whole piped stdin ("" for a terminal / nothing piped) */
   readStdin: () => Promise<string>;
+  /**
+   * DGAJ29: true only when this process runs in an interactive terminal (stdout AND stdin are a TTY).
+   * Absent = false: the recovery phrase is then never shown (tests, MCP, an agent's shell tool).
+   */
+  interactive?: () => boolean;
 }
 
 function liveOk(fields: Record<string, unknown>): Answer {
@@ -598,6 +621,7 @@ function pairingAnswer(wallet: Signer, owner: string, now: number, created: bool
     pairingCode: code,
     pairingCodeValidMs: API_PAIR_TS_SKEW_MS,
     walletFile: WALLET_PATH_TEXT,
+    ...(created ? { recovery: RECOVERY_SETUP_TEXT } : {}),
     warning: AGENT_WALLET_WARNING,
     next: PAIR_NEXT_STEP,
   });
@@ -679,6 +703,76 @@ async function liveWhoami(d: LiveDeps): Promise<Answer> {
   });
 }
 
+// ---- recovery phrase (DGAJ29) ------------------------------------------------------------------
+
+export const RECOVERY_NEEDS_TERMINAL_TEXT = "Run this yourself in your own terminal. It is never shown to an agent.";
+export const PHRASE_SAFETY =
+  "Degenly never sees or stores your recovery phrase. Anyone with the phrase can take the agent wallet's funds; never paste it into a chat or give it to an agent.";
+
+/**
+ * `degenly recovery-phrase`: the ONLY path that shows the words. Refused unless an interactive terminal
+ * (stdout AND stdin are a TTY) and no `--json`. On success the words come back as plain text, never as an Answer
+ * (so no JSON / MCP serializer ever holds them).
+ */
+function liveRecoveryPhrase(d: LiveDeps, p: Parsed): { ok: true; text: string } | { ok: false; answer: Answer } {
+  if (p.json || p.rest.length !== 1 || d.interactive?.() !== true) return { ok: false, answer: liveFail("RECOVERY_NEEDS_TERMINAL") };
+  if (d.homeError) return { ok: false, answer: liveFail(d.homeError) };
+  const r = recoveryWords(d.home);
+  if (!r.ok) return { ok: false, answer: liveFail(r.error) };
+  const numbered = r.words.map((w, i) => `${String(i + 1).padStart(2, " ")}. ${w}`);
+  r.words.fill("");
+  const text = [
+    `Agent wallet: ${r.address}`,
+    `Recovery phrase (${RECOVERY_WORD_COUNT} words, path m/44'/501'/0'/0', the Phantom / Solflare default):`,
+    "",
+    ...numbered,
+    "",
+    "Write the words down on paper, in this order. " + PHRASE_SAFETY,
+    "Clear this terminal window when you are done.",
+  ].join("\n");
+  numbered.fill("");
+  return { ok: true, text };
+}
+
+/** Reads the phrase text from --phrase-file or piped stdin (never an argument). Error codes only, never a word. */
+async function phraseInput(d: LiveDeps, p: Parsed): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+  if (p.phraseFile !== undefined) {
+    try {
+      const buf = readFileSync(p.phraseFile);
+      if (buf.length > KEY_INPUT_MAX_BYTES) return { ok: false, error: "PHRASE_WORD_COUNT" };
+      const text = buf.toString("utf8");
+      buf.fill(0);
+      return { ok: true, text };
+    } catch {
+      return { ok: false, error: "PHRASE_FILE_UNREADABLE" };
+    }
+  }
+  return { ok: true, text: await d.readStdin() };
+}
+
+/** `degenly recover`: phrase from stdin / --phrase-file → wallet + recovery.json. Output: the address only. */
+async function liveRecover(d: LiveDeps, p: Parsed): Promise<Answer> {
+  // like login: any extra word or a --phrase style flag is refused, stdin not read, nothing echoed
+  if (p.phraseArg || p.keyArg || p.rest.length !== 1 || p.phraseFile === "") return liveFail("PHRASE_ARG_REFUSED");
+  if (d.homeError) return liveFail(d.homeError);
+  const before = loadWallet(d.home);
+  if (before.ok || before.error === "WALLET_CORRUPT") return liveFail("WALLET_EXISTS", before.ok ? { address: before.wallet.address } : {});
+  const input = await phraseInput(d, p);
+  if (!input.ok) return liveFail(input.error);
+  const words = splitPhrase(input.text);
+  if (words.length === 0) return liveFail("NO_PHRASE_INPUT");
+  const e = wordsToEntropy(words);
+  words.fill("");
+  if (!e.ok) return liveFail(e.error);
+  try {
+    const r = restoreWallet(d.home, e.entropy);
+    if (!r.ok) return liveFail(r.error);
+    return liveOk({ address: r.wallet.address, walletFile: WALLET_PATH_TEXT, recoveryFile: RECOVERY_PATH_TEXT, next: "Check it with: degenly whoami (pair again on degenly.app/bot if this computer has no API key)." });
+  } finally {
+    e.entropy.fill(0);
+  }
+}
+
 /**
  * Runs one CLI command (never prompts). `out` = the full text to print; `code` = the exit code.
  * `live` absent (demo-only callers) → the live commands keep answering NOT_AVAILABLE_IN_DEMO.
@@ -693,11 +787,18 @@ export async function runCli(argv: string[], ops: Ops, live?: LiveDeps): Promise
   if (c0 === "help" || c0 === "--help" || c0 === "-h") return { code: 0, out: p.json ? JSON.stringify(okAnswer({ usage: USAGE })) : USAGE };
   if (c0 === "version" || c0 === "--version") return { code: 0, out: p.json ? JSON.stringify(okAnswer({ version: VERSION })) : VERSION };
   if (p.keyArg) return done("login", liveFail("KEY_ARG_REFUSED"));
+  // DGAJ29: a recovery phrase is never an argument, for any command (shell history); the value is never echoed
+  if (p.phraseArg) return done(c0 ?? "error", liveFail("PHRASE_ARG_REFUSED"));
   if (live && (c0 === "setup" || c0 === "pair")) {
     if (!args(1, r)) return done(c0, liveFail("BAD_ARGS", { hint: `Usage: degenly ${c0} --owner <main wallet address>` }));
     return done(c0, c0 === "setup" ? await liveSetup(live, p.owner) : await livePair(live, p.owner));
   }
   if (live && c0 === "login") return done("login", await liveLogin(live, p));
+  if (live && c0 === "recovery-phrase") {
+    const rp = liveRecoveryPhrase(live, p);
+    return rp.ok ? { code: 0, out: rp.text } : done("recovery-phrase", rp.answer);
+  }
+  if (live && c0 === "recover") return done("recover", await liveRecover(live, p));
   if (live && c0 === "whoami") return done("whoami", args(1, r) ? await liveWhoami(live) : liveFail("BAD_ARGS", { hint: "Usage: degenly whoami" }));
   // DGAJ16: live READ commands only (a live buy / sell needs the human confirmation form: MCP only)
   if (live && c0 === "live") {
@@ -707,7 +808,7 @@ export async function runCli(argv: string[], ops: Ops, live?: LiveDeps): Promise
     if (c1 === "quote" && args(5, r)) return done("live quote", await read.quote(c2 ?? "", c3 ?? "", c4 ?? ""));
     return done("live", liveFail("BAD_ARGS", { hint: "Usage: degenly live holdings | live ledger [--limit N] | live quote <mint> buy <sol> | live quote <mint> sell <N%|all>" }));
   }
-  if (c0 === "setup" || c0 === "login" || c0 === "live" || c0 === "pair" || c0 === "whoami") return done(c0, fail("NOT_AVAILABLE_IN_DEMO"));
+  if (c0 === "setup" || c0 === "login" || c0 === "live" || c0 === "pair" || c0 === "whoami" || c0 === "recover" || c0 === "recovery-phrase") return done(c0, fail("NOT_AVAILABLE_IN_DEMO"));
 
   if (c0 === "demo") {
     if (c1 === "status" && args(2, r)) return done("status", await ops.status());
@@ -766,6 +867,7 @@ export function defaultLive(): LiveDeps {
     fetch: (url, init) => fetch(url, init),
     now: () => Date.now(),
     readStdin: readPipedStdin,
+    interactive: () => process.stdout.isTTY === true && process.stdin.isTTY === true,
   };
 }
 
@@ -773,7 +875,8 @@ async function main(argv: string[]): Promise<void> {
   const ops = defaultOps();
   if (argv.length === 0 || (argv.length === 1 && argv[0] === "mcp")) {
     const { startMcpStdio } = await import("./mcp.js");
-    await startMcpStdio(ops, defaultLive());
+    // DGAJ29: inside MCP the recovery phrase is never shown (no tool exists for it; the flag closes the CLI path too)
+    await startMcpStdio(ops, { ...defaultLive(), interactive: () => false });
     return;
   }
   const r = await runCli(argv, ops, defaultLive());

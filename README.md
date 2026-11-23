@@ -26,6 +26,23 @@ One command, no wallet: `npx -y @degenly/agent@0.1.1 demo status --json`
 Check it: `npx -y @degenly/agent@0.1.1 whoami`. A new pairing code for the same wallet:
 `npx -y @degenly/agent@0.1.1 pair --owner <main wallet address>` (`setup` never overwrites an existing wallet).
 
+## Recovery phrase (12 words)
+
+`setup` makes the agent wallet from a standard 12-word recovery phrase (BIP39, path `m/44'/501'/0'/0'`, the
+Phantom / Solflare default: "Import recovery phrase" there opens the same address). The phrase is made and kept only
+on this computer (`~/.degenly/recovery.json`). Degenly never sees or stores your recovery phrase: it is never sent,
+logged or printed by `setup`.
+
+- `degenly recovery-phrase`: shows the 12 words. Run it yourself in your own terminal and write them down on paper.
+  It refuses to show them to an agent (no interactive terminal, `--json`, or inside the MCP server:
+  `RECOVERY_NEEDS_TERMINAL`). Wallets made before recovery phrases existed answer `NO_RECOVERY_PHRASE`: back up
+  `~/.degenly/agent-wallet.json`, or withdraw and run setup again.
+- `degenly recover --phrase-file <path>` (or the words piped on stdin to `degenly recover`): rebuilds the agent
+  wallet on a new computer. The words are never taken as a command argument. It never overwrites an existing
+  agent wallet (`WALLET_EXISTS`) and prints only the address.
+
+Anyone with the phrase can take the agent wallet's funds; never paste it into a chat or give it to an agent.
+
 ## Add Degenly to your AI app (one line per client)
 
 - Claude Code: `claude mcp add degenly -- npx -y @degenly/agent@0.1.1`
@@ -65,7 +82,7 @@ Spending limits apply to trades made through Degenly. An agent that can read fil
   [Claude Code permissions docs](https://code.claude.com/docs/en/permissions)).
   An equivalent rule for Cursor or Gemini CLI is not verified.
 - The key file is kept in your home folder (`~/.degenly/`), never in a project folder. Do not ask an agent to read,
-  print, copy or move it.
+  print, copy or move it. The same holds for `~/.degenly/recovery.json`: an agent that can read files can read it.
 
 ## Tools / commands
 
@@ -114,6 +131,8 @@ Errors: non-zero exit (0 ok, 2 usage, 3 rate limited, 4 network / Degenly, 1 oth
 | `NOT_FOUND` | the Bot API answered 404 (off right now): nothing was sent; demo mode still works |
 | `NO_WALLET` / `NOT_LOGGED_IN` / `LIVE_NOT_READY` | run setup, pair on degenly.app/bot, then login |
 | `WALLET_EXISTS` | an agent wallet exists and is never overwritten; use `pair` for a new code |
+| `RECOVERY_NEEDS_TERMINAL` / `NO_RECOVERY_PHRASE` | the phrase is shown only to you in your own terminal / this wallet predates recovery phrases |
+| `PHRASE_ARG_REFUSED` / `PHRASE_WORD_COUNT` / `PHRASE_UNKNOWN_WORD` / `PHRASE_CHECKSUM` | `recover`: use stdin or `--phrase-file`; 12 valid words in the right order |
 | `KEY_ARG_REFUSED` | the API key was given as an argument; use stdin or `--key-file` |
 | `KEY_INVALID` / `KEY_WALLET_MISMATCH` | unknown / revoked key, or a key of another wallet: pair again |
 | `SPEND_LIMIT` / `SPEND_LIMIT_NOT_SET` / `LOCAL_SPEND_LIMIT` / `LOCAL_LIMIT_UNKNOWN` | refused by the spending limit (or no limit known): nothing sent |

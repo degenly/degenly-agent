@@ -14,9 +14,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { FetchLike } from "../src/api.js";
-import { createOps, runCli, type LiveDeps } from "../src/cli.js";
+import { USAGE, createOps, runCli, type LiveDeps } from "../src/cli.js";
 import { LIVE_NOT_AVAILABLE } from "../src/client.js";
-import { AGENT_WALLET_WARNING } from "../src/keys.js";
+import { AGENT_WALLET_WARNING, RECOVERY_SETUP_TEXT } from "../src/keys.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const read = (f: string): string => readFileSync(join(ROOT, f), "utf8");
@@ -135,7 +135,7 @@ describe("DGAJ17 docs: every documented command is a real command", () => {
   it("README.md: all command lines parse (setup, pair, login, whoami, live ..., demo ..., token, search, trending, mcp)", async () => {
     const lines = commandLines(README);
     // the extraction itself must keep finding the documented commands (an empty list would pass silently)
-    for (const must of ["setup --owner <main wallet address>", "login --key-file <path>", "whoami", "pair --owner <main wallet address>", "demo status --json", "live holdings", "live quote <mint> buy <sol>", "demo buy <mint> <sol>", "trending [5m|1h|6h|24h] [--limit N]", "mcp"]) {
+    for (const must of ["setup --owner <main wallet address>", "login --key-file <path>", "whoami", "pair --owner <main wallet address>", "demo status --json", "live holdings", "live quote <mint> buy <sol>", "demo buy <mint> <sol>", "trending [5m|1h|6h|24h] [--limit N]", "mcp", "recovery-phrase", "recover --phrase-file <path>", "recover"]) {
       expect(lines, must).toContain(must);
     }
     const ran = await checkRecognized("README.md", lines);
@@ -146,7 +146,7 @@ describe("DGAJ17 docs: every documented command is a real command", () => {
   it("SKILL.md: all command lines parse; the file stays within 110 lines", async () => {
     expect(SKILL.split("\n").length).toBeLessThanOrEqual(110);
     const lines = commandLines(SKILL);
-    for (const must of ["search bonk --json", "demo buy <mint> 0.1 --json", "setup --owner <main wallet address>", "login --key-file <path>", "live holdings", "help"]) {
+    for (const must of ["search bonk --json", "demo buy <mint> 0.1 --json", "setup --owner <main wallet address>", "login --key-file <path>", "live holdings", "help", "recovery-phrase", "recover"]) {
       expect(lines, must).toContain(must);
     }
     await checkRecognized("SKILL.md", lines);
@@ -247,6 +247,21 @@ describe("DGAJ17 docs: safety text", () => {
   it("README lists every MCP tool (demo + degenly_live_*)", async () => {
     const { TOOL_NAMES, LIVE_TOOL_NAMES } = await import("../src/mcp.js");
     for (const n of [...TOOL_NAMES, ...LIVE_TOOL_NAMES]) expect(README, n).toContain(`\`${n}\``);
+  });
+
+  it("DGAJ29: README, SKILL.md and USAGE name both recovery commands and carry the two recovery sentences", () => {
+    const never = "Degenly never sees or stores your recovery phrase";
+    const anyone = /anyone with the phrase can take the agent wallet's funds; never paste it into a chat or give it to an agent/i;
+    for (const [name, text] of [["README.md", README], ["SKILL.md", SKILL], ["USAGE", USAGE]] as const) {
+      expect(text, name).toContain(never);
+      expect(text, name).toMatch(anyone);
+      expect(text, name).toContain("degenly recovery-phrase");
+      expect(text, name).toContain("degenly recover");
+    }
+    // the setup line points at the same command the docs name
+    expect(RECOVERY_SETUP_TEXT).toContain("`degenly recovery-phrase`");
+    expect(README).toContain("NO_RECOVERY_PHRASE");
+    expect(README).toContain("m/44'/501'/0'/0'");
   });
 
   it("package texts: no exchange / custody / payment wording, no return promises", () => {

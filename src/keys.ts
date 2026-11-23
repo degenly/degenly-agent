@@ -12,14 +12,25 @@
  *    public address and a `sign` function only.
  *  - `--keychain` (OS credential store) is NOT offered: not measured on the three OSes (DGAJ-S A4 madde 3).
  */
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { createPrivateKey, createPublicKey, generateKeyPairSync, sign as edSign, type KeyObject } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { createPrivateKey, createPublicKey, randomBytes, sign as edSign, type KeyObject } from "node:crypto";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { RECOVERY_ENTROPY_BYTES, entropyToSolanaSeed, entropyToWords } from "./mnemonic.js";
 import { base58Encode, type Signer } from "./sign.js";
 
 export const DEGENLY_DIR_NAME = ".degenly";
 export const WALLET_FILE_NAME = "agent-wallet.json";
 export const WALLET_PATH_TEXT = "~/.degenly/agent-wallet.json";
+/**
+ * DGAJ29: the recovery entropy of a wallet made by `setup` / `recover` (`{"v":1,"entropyHex":"..."}`), next to the
+ * wallet file, same protection (0600, never overwritten). Wallets made before DGAJ29 have none and keep working.
+ */
+export const RECOVERY_FILE_NAME = "recovery.json";
+export const RECOVERY_PATH_TEXT = "~/.degenly/recovery.json";
+
+/** DGAJ29: the `setup` line about the phrase (the words themselves are never in `setup` output). Do not reword. */
+export const RECOVERY_SETUP_TEXT =
+  "Recovery phrase: run `degenly recovery-phrase` yourself in your own terminal and write the 12 words down. Degenly never sees or stores them.";
 
 /**
  * DGAJ-S A4 madde 1: the SAME sentence in 3 places (`setup` output, `/bot` safety note, README).
@@ -80,35 +91,147 @@ export function signerFromSeed(seed: Uint8Array): Signer {
   return signerOf(key, publicKeyOf(key));
 }
 
-function seedOf(key: KeyObject): Uint8Array {
-  const der = key.export({ format: "der", type: "pkcs8" });
-  return new Uint8Array(der.subarray(der.length - 32));
-}
-
 function ensureDir(home: string): void {
   const dir = degenlyDir(home);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   if (POSIX) chmodSync(dir, 0o700);
 }
 
-/** `setup`: a NEW wallet, only if no file exists. Never overwrites (flag `wx`). */
-export function createWallet(home: string): { ok: true; wallet: Signer; path: string } | { ok: false; error: "WALLET_EXISTS" | "WALLET_WRITE_FAILED" } {
+export function recoveryPath(home: string): string {
+  return join(degenlyDir(home), RECOVERY_FILE_NAME);
+}
+
+function isEexist(e: unknown): boolean {
+  return typeof e === "object" && e !== null && (e as { code?: unknown }).code === "EEXIST";
+}
+
+/** Writes a new file 0600 with `wx` (never over an existing one). */
+function writeNew(file: string, content: string): void {
+  writeFileSync(file, content, { mode: 0o600, flag: "wx" });
+  if (POSIX) chmodSync(file, 0o600);
+}
+
+/**
+ * Wallet file + (optionally) recovery file from 16 bytes of entropy. The recovery file is written first, then the
+ * wallet; a wallet write that fails removes the recovery file it just made (that wallet never existed).
+ * Every secret buffer is zeroed before returning.
+ */
+function writeFromEntropy(home: string, entropy: Uint8Array, writeRecovery: boolean): { ok: true; wallet: Signer; path: string } | { ok: false; error: "WALLET_EXISTS" | "RECOVERY_EXISTS" | "WALLET_WRITE_FAILED" } {
   const file = walletPath(home);
-  if (existsSync(file)) return { ok: false, error: "WALLET_EXISTS" };
-  const { privateKey } = generateKeyPairSync("ed25519");
-  const pub = publicKeyOf(privateKey);
-  const seed = seedOf(privateKey);
+  const rfile = recoveryPath(home);
+  const seed = entropyToSolanaSeed(entropy);
+  const key = privateKeyFromSeed(seed);
+  const pub = publicKeyOf(key);
   const content = JSON.stringify([...seed, ...pub]);
   seed.fill(0);
+  const recovery = writeRecovery ? JSON.stringify({ v: 1, entropyHex: Buffer.from(entropy).toString("hex") }) : "";
   try {
     ensureDir(home);
-    writeFileSync(file, content, { mode: 0o600, flag: "wx" });
-    if (POSIX) chmodSync(file, 0o600);
-  } catch (e) {
-    if (typeof e === "object" && e !== null && (e as { code?: unknown }).code === "EEXIST") return { ok: false, error: "WALLET_EXISTS" };
+  } catch {
     return { ok: false, error: "WALLET_WRITE_FAILED" };
   }
-  return { ok: true, wallet: signerOf(privateKey, pub), path: file };
+  if (writeRecovery) {
+    try {
+      writeNew(rfile, recovery);
+    } catch (e) {
+      return { ok: false, error: isEexist(e) ? "RECOVERY_EXISTS" : "WALLET_WRITE_FAILED" };
+    }
+  }
+  try {
+    writeNew(file, content);
+  } catch (e) {
+    if (writeRecovery) {
+      try {
+        unlinkSync(rfile);
+      } catch {
+        // left in place: it belongs to a wallet that was never written
+      }
+    }
+    return { ok: false, error: isEexist(e) ? "WALLET_EXISTS" : "WALLET_WRITE_FAILED" };
+  }
+  return { ok: true, wallet: signerOf(key, pub), path: file };
+}
+
+/**
+ * `setup`: a NEW wallet, only if no wallet file exists. Never overwrites (flag `wx`).
+ * DGAJ29: the key comes from 16 random bytes of entropy (BIP39 12 words -> SLIP-0010 m/44'/501'/0'/0'); the entropy
+ * goes to `recovery.json`. A `recovery.json` left without a wallet is never overwritten (RECOVERY_EXISTS: it may be
+ * the only copy of a funded wallet's phrase).
+ */
+export function createWallet(home: string): { ok: true; wallet: Signer; path: string } | { ok: false; error: "WALLET_EXISTS" | "RECOVERY_EXISTS" | "WALLET_WRITE_FAILED" } {
+  if (existsSync(walletPath(home))) return { ok: false, error: "WALLET_EXISTS" };
+  if (existsSync(recoveryPath(home))) return { ok: false, error: "RECOVERY_EXISTS" };
+  const entropy = randomBytes(RECOVERY_ENTROPY_BYTES);
+  try {
+    return writeFromEntropy(home, entropy, true);
+  } finally {
+    entropy.fill(0);
+  }
+}
+
+/**
+ * `recover`: rebuilds the wallet file (and `recovery.json`) from the entropy of a checked phrase.
+ * A wallet file that exists is never overwritten (WALLET_EXISTS). An existing `recovery.json` is kept if it holds
+ * the same entropy, refused otherwise (RECOVERY_EXISTS).
+ */
+export function restoreWallet(home: string, entropy: Uint8Array): { ok: true; wallet: Signer; path: string } | { ok: false; error: "WALLET_EXISTS" | "RECOVERY_EXISTS" | "RECOVERY_CORRUPT" | "WALLET_WRITE_FAILED" } {
+  if (existsSync(walletPath(home))) return { ok: false, error: "WALLET_EXISTS" };
+  let writeRecovery = true;
+  if (existsSync(recoveryPath(home))) {
+    const r = loadRecoveryEntropy(home);
+    if (!r.ok) return { ok: false, error: r.error === "NO_RECOVERY_PHRASE" ? "WALLET_WRITE_FAILED" : r.error };
+    const same = Buffer.compare(r.entropy, Buffer.from(entropy)) === 0;
+    r.entropy.fill(0);
+    if (!same) return { ok: false, error: "RECOVERY_EXISTS" };
+    writeRecovery = false;
+  }
+  return writeFromEntropy(home, entropy, writeRecovery);
+}
+
+/** The entropy in `recovery.json`. Missing → NO_RECOVERY_PHRASE; anything but `{v:1, entropyHex: 32 hex}` → RECOVERY_CORRUPT. */
+export function loadRecoveryEntropy(home: string): { ok: true; entropy: Buffer } | { ok: false; error: "NO_RECOVERY_PHRASE" | "RECOVERY_CORRUPT" } {
+  const file = recoveryPath(home);
+  if (!existsSync(file)) return { ok: false, error: "NO_RECOVERY_PHRASE" };
+  let v: unknown;
+  try {
+    v = JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    return { ok: false, error: "RECOVERY_CORRUPT" };
+  }
+  const o = typeof v === "object" && v !== null ? (v as { v?: unknown; entropyHex?: unknown }) : {};
+  if (o.v !== 1 || typeof o.entropyHex !== "string" || !/^[0-9a-f]{32}$/.test(o.entropyHex)) return { ok: false, error: "RECOVERY_CORRUPT" };
+  return { ok: true, entropy: Buffer.from(o.entropyHex, "hex") };
+}
+
+/** Address the recovery entropy opens (m/44'/501'/0'/0'). */
+function addressOfEntropy(entropy: Uint8Array): string {
+  const seed = entropyToSolanaSeed(entropy);
+  try {
+    return base58Encode(publicKeyOf(privateKeyFromSeed(seed)));
+  } finally {
+    seed.fill(0);
+  }
+}
+
+/**
+ * The 12 words for `degenly recovery-phrase` (the CLI shows them only in an interactive terminal).
+ * If a wallet file exists, the words must open THAT address (RECOVERY_MISMATCH otherwise: wrong words are never shown).
+ */
+export function recoveryWords(home: string): { ok: true; words: string[]; address: string; walletFile: boolean } | { ok: false; error: "NO_RECOVERY_PHRASE" | "RECOVERY_CORRUPT" | "RECOVERY_MISMATCH" | "WALLET_CORRUPT" } {
+  const r = loadRecoveryEntropy(home);
+  if (!r.ok) return r;
+  try {
+    const address = addressOfEntropy(r.entropy);
+    const hasWallet = existsSync(walletPath(home));
+    if (hasWallet) {
+      const w = loadWallet(home);
+      if (!w.ok) return { ok: false, error: w.error === "NO_WALLET" ? "WALLET_CORRUPT" : w.error };
+      if (w.wallet.address !== address) return { ok: false, error: "RECOVERY_MISMATCH" };
+    }
+    return { ok: true, words: entropyToWords(r.entropy), address, walletFile: hasWallet };
+  } finally {
+    r.entropy.fill(0);
+  }
 }
 
 /** Reads the wallet. Missing → NO_WALLET; anything else than a valid 64-byte keypair → WALLET_CORRUPT (file untouched). */

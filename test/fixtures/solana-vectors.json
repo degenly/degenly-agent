@@ -1,0 +1,32 @@
+{
+ "note": "TEST VECTORS ONLY (public BIP39 test mnemonics, never fund). BIP39 seed (PBKDF2-HMAC-SHA512, 2048 rounds, salt 'mnemonic' + passphrase) -> SLIP-0010 ed25519, path m/44'/501'/0'/0' (Phantom / Solflare default). Checked against the official BIP39 (trezor vectors.json) and SLIP-0010 test vector 1 before writing.",
+ "vectors": [
+  {
+   "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+   "passphrase": "",
+   "path": "m/44'/501'/0'/0'",
+   "bip39SeedHex": "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4",
+   "privateSeedHex": "37df573b3ac4ad5b522e064e25b63ea16bcbe79d449e81a0268d1047948bb445",
+   "publicKeyHex": "f036276246a75b9de3349ed42b15e232f6518fc20f5fcd4f1d64e81f9bd258f7",
+   "address": "HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk"
+  },
+  {
+   "mnemonic": "legal winner thank year wave sausage worth useful legal winner thank yellow",
+   "passphrase": "",
+   "path": "m/44'/501'/0'/0'",
+   "bip39SeedHex": "878386efb78845b3355bd15ea4d39ef97d179cb712b77d5c12b6be415fffeffe5f377ba02bf3f8544ab800b955e51fbff09828f682052a20faa6addbbddfb096",
+   "privateSeedHex": "6987bdb06aa8a243a3019f41489ffa8e609c953a885a748d1849a8df760aa479",
+   "publicKeyHex": "999d46fb3d1256f7049c8ed09314d7268612e8a91b800e91934463848305c98c",
+   "address": "BLeUXTx9thHGT7VJUtF9vHEmfMDgW1nnKZ9UVer2CoLX"
+  },
+  {
+   "mnemonic": "letter advice cage absurd amount doctor acoustic avoid letter advice cage above",
+   "passphrase": "",
+   "path": "m/44'/501'/0'/0'",
+   "bip39SeedHex": "77d6be9708c8218738934f84bbbb78a2e048ca007746cb764f0673e4b1812d176bbb173e1a291f31cf633f1d0bad7d3cf071c30e98cd0688b5bcce65ecaceb36",
+   "privateSeedHex": "8ab69a9cd074a86f71fea02a807dac8cc5d498f292844417640946f497117746",
+   "publicKeyHex": "bbd6c3ddda96a920e60778c551eed502a00b54781a50be548cd4b040e6c2c655",
+   "address": "DeFBNaVhnpKkv1mG6vhCwQe3QzrGwMe1V5ust48PMQ9i"
+  }
+ ]
+}

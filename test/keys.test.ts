@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { AGENT_WALLET_WARNING, WALLET_FILE_NAME, createWallet, loadWallet, resolveHome, walletPath } from "../src/keys.js";
+import { AGENT_WALLET_WARNING, RECOVERY_FILE_NAME, WALLET_FILE_NAME, createWallet, loadWallet, recoveryPath, resolveHome, walletPath } from "../src/keys.js";
 import { base58Decode } from "../src/sign.js";
 
 const POSIX = process.platform !== "win32";
@@ -61,14 +61,17 @@ describe("DGAJ15 keys: create", () => {
 });
 
 describe("DGAJ15 keys: never overwrite, never regenerate", () => {
-  it("second create → WALLET_EXISTS, file bytes unchanged", () => {
+  it("second create → WALLET_EXISTS, file bytes unchanged (wallet + recovery.json)", () => {
     const home = tmpHome();
     const a = createWallet(home);
     expect(a.ok).toBe(true);
     const bytes = readFileSync(walletPath(home));
+    const rec = readFileSync(recoveryPath(home));
     const b = createWallet(home);
     expect(b).toEqual({ ok: false, error: "WALLET_EXISTS" });
     expect(readFileSync(walletPath(home)).equals(bytes)).toBe(true);
+    expect(readFileSync(recoveryPath(home)).equals(rec)).toBe(true);
+    expect(readdirSync(join(home, ".degenly")).sort()).toEqual([RECOVERY_FILE_NAME, WALLET_FILE_NAME].sort());
   });
 
   it("corrupt file → WALLET_CORRUPT on load; create still refuses; file kept byte for byte", () => {
@@ -80,6 +83,8 @@ describe("DGAJ15 keys: never overwrite, never regenerate", () => {
       expect(createWallet(home)).toEqual({ ok: false, error: "WALLET_EXISTS" });
       expect(readFileSync(walletPath(home), "utf8")).toBe(content);
       expect(readdirSync(join(home, ".degenly"))).toEqual([WALLET_FILE_NAME]);
+      // DGAJ29: no recovery.json is ever written next to an existing (here corrupt) wallet
+      expect(existsSync(recoveryPath(home))).toBe(false);
     }
   });
 

@@ -222,6 +222,18 @@ export const LIVE_HINTS: Readonly<Record<string, string>> = {
   REPLAY: "This exact signed request was already used. Retry (a new signature is made each time).",
   API_TERMS_REQUIRED: "The API Terms changed. Pair again on degenly.app/bot to accept the current version.",
   RATE_LIMITED: "Wait retryAfterMs, then retry.",
+  // DGAJ29: recovery phrase (hints never carry a word of it)
+  RECOVERY_NEEDS_TERMINAL: "Run this yourself in your own terminal. It is never shown to an agent.",
+  NO_RECOVERY_PHRASE: "This agent wallet was created before recovery phrases existed. Back up ~/.degenly/agent-wallet.json, or withdraw and run setup again.",
+  RECOVERY_CORRUPT: "~/.degenly/recovery.json is not a valid recovery file. It was left as is. Your agent wallet file still works; back it up.",
+  RECOVERY_MISMATCH: "~/.degenly/recovery.json does not belong to the agent wallet on this computer, so no words are shown. Both files were left as is. Back up ~/.degenly/agent-wallet.json.",
+  RECOVERY_EXISTS: "~/.degenly/recovery.json already exists (it may be the only copy of a wallet's phrase) and is never overwritten. Move it somewhere safe first if you really want a new wallet.",
+  PHRASE_ARG_REFUSED: "The recovery phrase is never taken as a command argument (it would stay in shell history). Pipe it on stdin: degenly recover < phrase.txt, or use: degenly recover --phrase-file <path>",
+  NO_PHRASE_INPUT: "No recovery phrase on stdin. Pipe it in (degenly recover < phrase.txt) or use: degenly recover --phrase-file <path>. Delete that file afterwards.",
+  PHRASE_FILE_UNREADABLE: "Could not read the --phrase-file path.",
+  PHRASE_WORD_COUNT: "A Degenly agent wallet recovery phrase has exactly 12 words, separated by spaces.",
+  PHRASE_UNKNOWN_WORD: "One of the words is not in the BIP39 English word list. Check the spelling against what you wrote down; nothing is guessed.",
+  PHRASE_CHECKSUM: "The 12 words are valid words but not a valid recovery phrase (checksum). Check the order and spelling; nothing is guessed.",
 };
 
 export function liveHint(code: string): string {

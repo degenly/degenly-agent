@@ -7,7 +7,7 @@
     "": {
       "name": "@degenly/agent",
       "version": "0.1.0",
-      "license": "UNLICENSED",
+      "license": "MIT",
       "dependencies": {
         "@modelcontextprotocol/sdk": "1.32.2"
       },

@@ -1,10 +1,28 @@
 {
   "name": "@degenly/agent",
   "version": "0.1.0",
-  "private": true,
-  "description": "Degenly for AI agents: CLI + MCP server. Demo mode: 10 demo SOL, live prices, no wallet, no keys, no account.",
+  "description": "Degenly for AI agents: MCP server + CLI to look up and trade Solana tokens on Degenly. Demo mode needs no wallet; live mode uses a separate local agent wallet.",
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/degenly/degenly-agent.git"
+  },
+  "homepage": "https://degenly.app",
+  "bugs": {
+    "url": "https://github.com/degenly/degenly-agent/issues"
+  },
+  "keywords": [
+    "degenly",
+    "mcp",
+    "solana",
+    "ai-agent",
+    "memecoin",
+    "cli"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=20"
   },
@@ -14,8 +32,10 @@
   },
   "files": [
     "dist",
+    "docs",
     "SKILL.md",
     "README.md",
+    "LICENSE",
     "npm-shrinkwrap.json"
   ],
   "scripts": {

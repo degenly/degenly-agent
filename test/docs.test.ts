@@ -179,7 +179,7 @@ describe("DGAJ17 docs: client install lines = DGAJ-S A2", () => {
     expect(PKG.bin.agent).toBe("dist/cli.js");
     expect(PKG.bin.degenly).toBe("dist/cli.js");
     expect(A2_JSON.args.at(-1)).toBe(`${PKG.name}@${PKG.version}`);
-    expect(PKG.private).toBe(true);
+    expect(PKG.private).toBeUndefined();
     expect(Object.keys(PKG.scripts).filter((s) => /^(pre|post)install$|^prepare$/.test(s))).toEqual([]);
   });
 

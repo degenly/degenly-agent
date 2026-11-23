@@ -395,10 +395,10 @@ describe("DGAJ15 leak capture: the private key never leaves the wallet file", ()
 });
 
 describe("DGAJ15 package.json", () => {
-  it("no install-time scripts; private; only the MCP SDK as runtime dependency", () => {
+  it("no install-time scripts; public (MIT); only the MCP SDK as runtime dependency", () => {
     const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as { private?: boolean; scripts?: Record<string, string>; dependencies?: Record<string, string> };
     for (const s of ["preinstall", "install", "postinstall", "prepare", "prepublish", "preprepare", "postprepare"]) expect(pkg.scripts?.[s], s).toBeUndefined();
-    expect(pkg.private).toBe(true);
+    expect(pkg.private).toBeUndefined();
     expect(Object.keys(pkg.dependencies ?? {})).toEqual(["@modelcontextprotocol/sdk"]);
   });
 });

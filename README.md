@@ -1,12 +1,33 @@
 # @degenly/agent
 
 Degenly for AI agents: one package with an MCP server, a CLI and a `SKILL.md`.
+Your AI app (Claude Code, Gemini CLI, Cursor, Claude Desktop) uses it to look up Solana tokens and trade them on Degenly.
+Demo mode needs nothing; live mode uses a separate agent wallet whose key is created and kept on your computer.
 
-**Demo mode (this version):** 10 demo SOL, live Degenly prices, no wallet, no key, no account, no browser step.
+**Live trading is not available yet.** Degenly's Bot API (`/v1/*`) is switched off today and answers 404, so the live
+tools and commands below cannot trade yet. Demo mode works now. Do not fund the agent wallet until live trading is available.
+
+## Demo mode (works now)
+
+10 demo SOL, live Degenly prices, no wallet, no key, no account, no browser step.
 The demo record lives only on your computer in `~/.degenly/demo.json`; nothing about it is sent to Degenly.
-Live trading is not available yet.
 
-## Install (one line per client)
+One command, no wallet: `npx -y @degenly/agent demo status --json`
+
+## Live mode setup (3 steps)
+
+1. `npx -y @degenly/agent setup --owner <main wallet address>`: creates the agent wallet on this computer
+   (`~/.degenly/agent-wallet.json`) and prints its address and a pairing code (valid 10 minutes, once).
+2. On degenly.app open `/bot`, sign in with your main wallet, choose "Pair agent" and paste the pairing code.
+   The site shows an API key once. Fund the agent wallet with SOL only after live trading is available, and only
+   with what you can afford to lose.
+3. `npx -y @degenly/agent login --key-file <path>`: stores the API key in `~/.degenly/credentials.json`
+   (or pipe the key on stdin to `login`; the key is never taken as a command argument).
+
+Check it: `npx -y @degenly/agent whoami`. A new pairing code for the same wallet:
+`npx -y @degenly/agent pair --owner <main wallet address>` (`setup` never overwrites an existing wallet).
+
+## Add Degenly to your AI app (one line per client)
 
 - Claude Code: `claude mcp add degenly -- npx -y @degenly/agent`
 - Gemini CLI: `gemini mcp add degenly npx -y @degenly/agent`
@@ -16,32 +37,99 @@ Live trading is not available yet.
 { "mcpServers": { "degenly": { "command": "npx", "args": ["-y", "@degenly/agent"] } } }
 ```
 
-Without arguments (or with `mcp`) the package starts the MCP stdio server. With a command it is the CLI:
-`npx -y @degenly/agent demo status --json`. Agent instructions: [SKILL.md](SKILL.md).
+ChatGPT does not support local MCP servers, so it cannot use this package. The Gemini web app: not verified.
+Per-client details and how each one shows the confirmation step: [docs/clients.md](docs/clients.md).
+
+Without arguments (or with `mcp`) the package starts the MCP stdio server. With a command it is the CLI.
+Agent instructions: [SKILL.md](SKILL.md).
+
+## Safety
+
+Spending limits apply to trades made through Degenly. An agent that can read files on this computer could read the agent wallet key and move funds outside Degenly. Fund the agent wallet with only what you can afford to lose.
+
+- **Spending limits** (per trade and per day) are set only on degenly.app: `/bot` → "Spending limits", signed in
+  with your main wallet. No tool or command of this package can change them. The package also checks them on this
+  computer before a buy is sent (second layer); the limit on Degenly's side is the real one. Sells are not limited.
+- **Every live buy / sell is confirmed by you** in a form your AI app shows (MCP elicitation), on by default. The
+  agent cannot switch it off. If your app cannot show the form, the trade is not sent; only you can set
+  `DEGENLY_CONFIRM=off` in this MCP server's configuration.
+- **Claude Code:** add a deny rule so Claude Code's file tools cannot read the agent wallet folder, in
+  `~/.claude/settings.json`:
+
+```json
+{ "permissions": { "deny": ["Read(~/.degenly/**)"] } }
+```
+
+  This is an extra layer, not full protection: the Read rule does not cover Bash commands in general. It applies to
+  Claude Code's built-in file tools and to some shell commands Claude Code recognizes, but not to a command that
+  reads files without naming them, such as `grep -r` (see the "Read and Edit" warning in the
+  [Claude Code permissions docs](https://code.claude.com/docs/en/permissions)).
+  An equivalent rule for Cursor or Gemini CLI is not verified.
+- The key file is kept in your home folder (`~/.degenly/`), never in a project folder. Do not ask an agent to read,
+  print, copy or move it.
 
 ## Tools / commands
 
+Demo (demo SOL only, every answer `"mode":"demo"` and `"note":"Demo trade. No real funds moved."`):
+
 | MCP tool | CLI | |
 |---|---|---|
-| `degenly_status` | `demo status` | demo balance, positions, realized P&L |
-| `degenly_quote` | `demo quote <mint> buy <sol>` / `sell <amount\|N%\|all>` | live price only |
-| `degenly_buy` | `demo buy <mint> <sol>` | demo buy at the live price |
-| `degenly_sell` | `demo sell <mint> <N%\|all>` | demo sell at the live price |
-| `degenly_trades` | `demo trades [--limit N]` | demo history, newest first |
-| `degenly_reset` | `demo reset` | back to 10 demo SOL |
-| `degenly_token` | `token <mint>` | name / symbol (untrusted), decimals, price, authorities |
-| `degenly_search` | `search <text>` | find mints by name or symbol |
-| `degenly_trending` | `trending [5m\|1h\|6h\|24h] [--limit N]` | most traded on Degenly |
+| `degenly_status` | `degenly demo status` | demo balance, positions, realized P&L |
+| `degenly_quote` | `degenly demo quote <mint> buy <sol>` / `degenly demo quote <mint> sell <amount\|N%\|all>` | live price only |
+| `degenly_buy` | `degenly demo buy <mint> <sol>` | demo buy at the live price |
+| `degenly_sell` | `degenly demo sell <mint> <N%\|all>` | demo sell at the live price |
+| `degenly_trades` | `degenly demo trades [--limit N]` | demo history, newest first |
+| `degenly_reset` | `degenly demo reset` | back to 10 demo SOL |
+| `degenly_token` | `degenly token <mint>` | name / symbol (untrusted), decimals, price, authorities |
+| `degenly_search` | `degenly search <text>` | find mints by name or symbol |
+| `degenly_trending` | `degenly trending [5m\|1h\|6h\|24h] [--limit N]` | most traded on Degenly |
 
-Every answer carries `"mode":"demo"` and `"note":"Demo trade. No real funds moved."`. Errors: non-zero exit and
-`{"ok":false,"error":"CODE","hint":"..."}` (codes in SKILL.md).
+Live (the agent wallet, every answer `"mode":"live"`; listed by the MCP server only after setup + pairing + login,
+except `degenly_live_whoami`, which says what is missing):
+
+| MCP tool | CLI | |
+|---|---|---|
+| `degenly_live_whoami` | `degenly whoami` | agent wallet + API key check, confirm setting, spending limit |
+| `degenly_live_token` | | token facts by mint (name / symbol untrusted) |
+| `degenly_live_price` | | USD price by mint |
+| `degenly_live_holdings` | `degenly live holdings` | real balances of the agent wallet |
+| `degenly_live_ledger` | `degenly live ledger [--limit N]` | confirmed Degenly trades of the agent wallet |
+| `degenly_live_quote` | `degenly live quote <mint> buy <sol>` / `degenly live quote <mint> sell <N%\|all>` | real quote, nothing signed or sent |
+| `degenly_live_buy` | (MCP only) | buy by mint; you confirm first |
+| `degenly_live_sell` | (MCP only) | sell by mint; you confirm first |
+
+Add `--json` to any CLI command for one-line JSON. Mint addresses only; names and symbols are refused.
+
+## Error codes
+
+Errors: non-zero exit (0 ok, 2 usage, 3 rate limited, 4 network / Degenly, 1 other) and
+`{"ok":false,"error":"CODE","hint":"..."}`. The `hint` says what to do.
+
+| error | meaning |
+|---|---|
+| `MINT_REQUIRED` | a name / symbol / bad address was passed instead of a mint |
+| `BAD_AMOUNT` / `BAD_PERCENT` / `BAD_ARGS` / `UNKNOWN_COMMAND` | wrong amount, percent, arguments or command |
+| `LOW_SOL` / `NO_HOLD` | demo: not enough demo SOL / no demo position |
+| `RATE_LIMITED` | wait `retryAfterMs`, then retry |
+| `NETWORK` / `BAD_RESPONSE` | Degenly unreachable or unexpected answer |
+| `NOT_FOUND` | the Bot API is off: live trading is not available yet |
+| `NO_WALLET` / `NOT_LOGGED_IN` / `LIVE_NOT_READY` | run setup, pair on degenly.app/bot, then login |
+| `WALLET_EXISTS` | an agent wallet exists and is never overwritten; use `pair` for a new code |
+| `KEY_ARG_REFUSED` | the API key was given as an argument; use stdin or `--key-file` |
+| `KEY_INVALID` / `KEY_WALLET_MISMATCH` | unknown / revoked key, or a key of another wallet: pair again |
+| `SPEND_LIMIT` / `SPEND_LIMIT_NOT_SET` / `LOCAL_SPEND_LIMIT` / `LOCAL_LIMIT_UNKNOWN` | refused by the spending limit (or no limit known): nothing sent |
+| `TOKEN_BLOCKED` | Degenly does not allow buying this token through the API |
+| `CANCELLED` / `CONFIRM_UNSUPPORTED` | you did not confirm, or the app cannot show the form: nothing sent |
+| `TRADING_DISABLED` / `TRADE_FAILED` | trading is off, or the trade did not complete |
+| `EXECUTE_OUTCOME_UNKNOWN` | sent, no answer: do NOT retry; check holdings and ledger first |
 
 ## What goes over the network
 
-Only Degenly's public read endpoints on `https://degenly.app`: `/api/swap/quote` (price only, no wallet),
-`/api/data/tokens`, `/api/data/search`, `/api/data/top`. No cookies, no keys, no telemetry.
-Each quote is a real upstream call for Degenly, so the package caps itself at 1 quote per 2 s and 300 per day per
-computer (`~/.degenly/quote-limit.json`).
+Demo: only Degenly's public read endpoints on `https://degenly.app`: `/api/swap/quote` (price only, no wallet),
+`/api/data/tokens`, `/api/data/search`, `/api/data/top`. Each quote is a real upstream call for Degenly, so the
+package caps itself at 1 quote per 2 s and 300 per day per computer (`~/.degenly/quote-limit.json`).
+Live: only signed requests to `https://degenly.app/v1/*`. The agent wallet key never leaves this computer; requests
+carry the API key and a signature. No cookies, no telemetry.
 
 ## Run from source (until it is published)
 

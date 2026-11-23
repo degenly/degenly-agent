@@ -42,6 +42,7 @@ import {
 import { SOL_DECIMALS, SOL_MINT, demoFill, demoNetworkLamports, formatUnits, parseSol, parseUnits, type DemoQuote } from "./demo/fill.js";
 import { DEMO_START_LAMPORTS, loadDemo, resetDemo, saveDemo, type DemoStateV1 } from "./demo/store.js";
 import { SYMBOL_MAX_CHARS, cleanText, isMint, showUntrusted, untrustedName, untrustedSymbol, type UntrustedText } from "./sanitize.js";
+import { createLiveRead } from "./tools/live-read.js";
 
 export const VERSION = "0.1.0";
 export const DEMO_NOTE = "Demo trade. No real funds moved.";
@@ -478,9 +479,13 @@ export const USAGE = [
   "  degenly pair --owner <main wallet>        new pairing code for the existing agent wallet",
   "  degenly login [--key-file <path>]         store the API key from stdin or a file (never an argument)",
   "  degenly whoami                            check the API key + agent wallet with Degenly",
+  "  degenly live holdings                     real balances of the agent wallet",
+  "  degenly live ledger [--limit N]           confirmed Degenly trades of the agent wallet",
+  "  degenly live quote <mint> buy <sol>       real quote, nothing signed or sent",
+  "  degenly live quote <mint> sell <N%|all>",
   "",
   "Add --json for one-line JSON. Mint addresses only; coin names are untrusted text.",
-  "Live trading is not available yet.",
+  "Live buy / sell: MCP tools degenly_live_buy / degenly_live_sell only (the human confirms each trade).",
 ].join("\n");
 
 interface Parsed {
@@ -696,6 +701,14 @@ export async function runCli(argv: string[], ops: Ops, live?: LiveDeps): Promise
   }
   if (live && c0 === "login") return done("login", await liveLogin(live, p));
   if (live && c0 === "whoami") return done("whoami", args(1, r) ? await liveWhoami(live) : liveFail("BAD_ARGS", { hint: "Usage: degenly whoami" }));
+  // DGAJ16: live READ commands only (a live buy / sell needs the human confirmation form: MCP only)
+  if (live && c0 === "live") {
+    const read = createLiveRead(live);
+    if (c1 === "holdings" && args(2, r)) return done("live holdings", await read.holdings());
+    if (c1 === "ledger" && args(2, r)) return done("live ledger", await read.ledger(p.limit));
+    if (c1 === "quote" && args(5, r)) return done("live quote", await read.quote(c2 ?? "", c3 ?? "", c4 ?? ""));
+    return done("live", liveFail("BAD_ARGS", { hint: "Usage: degenly live holdings | live ledger [--limit N] | live quote <mint> buy <sol> | live quote <mint> sell <N%|all>" }));
+  }
   if (c0 === "setup" || c0 === "login" || c0 === "live" || c0 === "pair" || c0 === "whoami") return done(c0, fail("NOT_AVAILABLE_IN_DEMO"));
 
   if (c0 === "demo") {
@@ -762,7 +775,7 @@ async function main(argv: string[]): Promise<void> {
   const ops = defaultOps();
   if (argv.length === 0 || (argv.length === 1 && argv[0] === "mcp")) {
     const { startMcpStdio } = await import("./mcp.js");
-    await startMcpStdio(ops);
+    await startMcpStdio(ops, defaultLive());
     return;
   }
   const r = await runCli(argv, ops, defaultLive());

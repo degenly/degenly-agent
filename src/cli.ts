@@ -21,7 +21,7 @@ import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { pathToFileURL } from "node:url";
 import { CREDENTIALS_PATH_TEXT, API_KEY_DISPLAY_CHARS, KEY_INPUT_MAX_BYTES, LIVE_NOT_AVAILABLE, createLiveClient, liveHint, loadCredentials, plausibleApiKey, resolveApiBase, saveCredentials } from "./client.js";
-import { AGENT_WALLET_WARNING, RECOVERY_PATH_TEXT, RECOVERY_SETUP_TEXT, WALLET_PATH_TEXT, createWallet, loadWallet, recoveryWords, resolveHome, restoreWallet } from "./keys.js";
+import { AGENT_WALLET_WARNING, RECOVERY_PATH_TEXT, RECOVERY_SETUP_TEXT, WALLET_PATH_TEXT, createWallet, deleteRecoveryFile, loadWallet, recoveryDeletedFor, recoveryWords, resolveHome, restoreWallet } from "./keys.js";
 import { RECOVERY_WORD_COUNT, splitPhrase, wordsToEntropy } from "./mnemonic.js";
 import { API_PAIR_TS_SKEW_MS, createPairingCode, isSolanaAddress, type Signer } from "./sign.js";
 import {
@@ -719,17 +719,38 @@ async function liveWhoami(d: LiveDeps): Promise<Answer> {
 export const RECOVERY_NEEDS_TERMINAL_TEXT = "Run this yourself in your own terminal. It is never shown to an agent.";
 export const PHRASE_SAFETY =
   "Degenly never sees or stores your recovery phrase. Anyone with the phrase can take the agent wallet's funds; never paste it into a chat or give it to an agent.";
+/** DGAJ34 (DGAJ31 G-1): the SAME sentence in 3 places (`recovery-phrase` output under the words, README, SKILL.md). Do not reword. */
+export const PHRASE_SCOPE_WARNING =
+  "Use this phrase only for the agent wallet. Do not add accounts to it or use it as your main wallet: anyone who reads ~/.degenly/recovery.json gets every account of this phrase.";
+/** DGAJ34: asked after the words, in the interactive terminal only. Only an exact DELETE (trimmed) deletes. */
+export const RECOVERY_DELETE_QUESTION = "Type DELETE to remove recovery.json from this computer now that you wrote the words down:";
+export const RECOVERY_KEPT_TEXT = "recovery.json kept. Run `degenly recovery-phrase` again when you are ready to delete it.";
+/** DGAJ34: after the delete (and on every later `recovery-phrase` for that wallet): information, exit code 0. */
+export const RECOVERY_GONE_TEXT = "The recovery phrase is no longer stored on this computer. Your written copy is the only one.";
+/** DGAJ34: the delete reminder (README + `recover` output). */
+export const RECOVERY_DELETE_REMINDER = "After you wrote the words down, delete recovery.json with `degenly recovery-phrase` (type DELETE).";
+export const RECOVERY_DELETE_FAILED_TEXT =
+  "RECOVERY_DELETE_FAILED: recovery.json could not be deleted and is still on this computer. Run `degenly recovery-phrase` again to retry.";
 
 /**
  * `degenly recovery-phrase`: the ONLY path that shows the words. Refused unless an interactive terminal
  * (stdout AND stdin are a TTY) and no `--json`. On success the words come back as plain text, never as an Answer
  * (so no JSON / MCP serializer ever holds them).
+ * DGAJ34: with a terminal prompt (`promptLine`), the words are shown as part of the prompt, followed by
+ * RECOVERY_DELETE_QUESTION; only an exact `DELETE` removes recovery.json (deleteRecoveryFile: that file only).
+ * Anything else, an empty line, EOF or a prompt error keeps it. Without `promptLine`: words only, no question.
  */
-function liveRecoveryPhrase(d: LiveDeps, p: Parsed): { ok: true; text: string } | { ok: false; answer: Answer } {
+async function liveRecoveryPhrase(d: LiveDeps, p: Parsed): Promise<{ ok: true; text: string; code?: number } | { ok: false; answer: Answer }> {
   if (p.json || p.rest.length !== 1 || d.interactive?.() !== true) return { ok: false, answer: liveFail("RECOVERY_NEEDS_TERMINAL") };
   if (d.homeError) return { ok: false, answer: liveFail(d.homeError) };
   const r = recoveryWords(d.home);
-  if (!r.ok) return { ok: false, answer: liveFail(r.error) };
+  if (!r.ok) {
+    if (r.error === "NO_RECOVERY_PHRASE") {
+      const w = loadWallet(d.home);
+      if (w.ok && recoveryDeletedFor(d.home, w.wallet.address)) return { ok: true, text: RECOVERY_GONE_TEXT };
+    }
+    return { ok: false, answer: liveFail(r.error) };
+  }
   const numbered = r.words.map((w, i) => `${String(i + 1).padStart(2, " ")}. ${w}`);
   r.words.fill("");
   const text = [
@@ -738,11 +759,21 @@ function liveRecoveryPhrase(d: LiveDeps, p: Parsed): { ok: true; text: string } 
     "",
     ...numbered,
     "",
+    PHRASE_SCOPE_WARNING,
     "Write the words down on paper, in this order. " + PHRASE_SAFETY,
     "Clear this terminal window when you are done.",
   ].join("\n");
   numbered.fill("");
-  return { ok: true, text };
+  if (d.promptLine === undefined) return { ok: true, text };
+  let answer = "";
+  try {
+    answer = await d.promptLine(`${text}\n\n${RECOVERY_DELETE_QUESTION} `);
+  } catch {
+    answer = "";
+  }
+  if (answer.trim() !== "DELETE") return { ok: true, text: RECOVERY_KEPT_TEXT };
+  const del = deleteRecoveryFile(d.home);
+  return del.ok ? { ok: true, text: RECOVERY_GONE_TEXT } : { ok: true, text: RECOVERY_DELETE_FAILED_TEXT, code: 1 };
 }
 
 /** Reads the phrase text from --phrase-file or piped stdin (never an argument). Error codes only, never a word. */
@@ -778,7 +809,7 @@ async function liveRecover(d: LiveDeps, p: Parsed): Promise<Answer> {
   try {
     const r = restoreWallet(d.home, e.entropy);
     if (!r.ok) return liveFail(r.error);
-    return liveOk({ address: r.wallet.address, walletFile: WALLET_PATH_TEXT, recoveryFile: RECOVERY_PATH_TEXT, next: "Check it with: degenly whoami (pair again on degenly.app/bot if this computer has no API key)." });
+    return liveOk({ address: r.wallet.address, walletFile: WALLET_PATH_TEXT, recoveryFile: RECOVERY_PATH_TEXT, recoveryReminder: RECOVERY_DELETE_REMINDER, next: "Check it with: degenly whoami (pair again on degenly.app/bot if this computer has no API key)." });
   } finally {
     e.entropy.fill(0);
   }
@@ -806,8 +837,8 @@ export async function runCli(argv: string[], ops: Ops, live?: LiveDeps): Promise
   }
   if (live && c0 === "login") return done("login", await liveLogin(live, p));
   if (live && c0 === "recovery-phrase") {
-    const rp = liveRecoveryPhrase(live, p);
-    return rp.ok ? { code: 0, out: rp.text } : done("recovery-phrase", rp.answer);
+    const rp = await liveRecoveryPhrase(live, p);
+    return rp.ok ? { code: rp.code ?? 0, out: rp.text } : done("recovery-phrase", rp.answer);
   }
   if (live && c0 === "recover") return done("recover", await liveRecover(live, p));
   // DGAJ30: SOL back to the paired main wallet; the human types YES in their own terminal (never --json / an agent shell)
@@ -889,12 +920,16 @@ export function defaultLive(): LiveDeps {
   };
 }
 
-/** DGAJ30: one line typed in the interactive terminal (`degenly withdraw` only; never used for a secret). */
+/**
+ * DGAJ30: one line typed in the interactive terminal (`degenly withdraw`; DGAJ34: the DELETE question of
+ * `degenly recovery-phrase`; never used to read a secret). EOF (Ctrl+D / closed stdin) answers "".
+ */
 async function promptTerminalLine(question: string): Promise<string> {
   if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) return "";
   const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
   try {
-    return await rl.question(question);
+    const closed = new Promise<string>((resolveLine) => rl.once("close", () => resolveLine("")));
+    return await Promise.race([rl.question(question).catch(() => ""), closed]);
   } finally {
     rl.close();
   }

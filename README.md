@@ -49,13 +49,20 @@ Phantom / Solflare default: "Import recovery phrase" there opens the same addres
 on this computer (`~/.degenly/recovery.json`). Degenly never sees or stores your recovery phrase: it is never sent,
 logged or printed by `setup`.
 
+Use this phrase only for the agent wallet. Do not add accounts to it or use it as your main wallet: anyone who reads ~/.degenly/recovery.json gets every account of this phrase.
+After you wrote the words down, delete recovery.json with `degenly recovery-phrase` (type DELETE).
+
 - `degenly recovery-phrase`: shows the 12 words. Run it yourself in your own terminal and write them down on paper.
+  It then asks you to type `DELETE` to remove `~/.degenly/recovery.json` (only an exact `DELETE` deletes it; anything
+  else keeps it). `~/.degenly/agent-wallet.json` stays and the agent wallet keeps working; afterwards your written
+  copy is the only one and `degenly recovery-phrase` no longer shows words.
   It refuses to show them to an agent (no interactive terminal, `--json`, or inside the MCP server:
   `RECOVERY_NEEDS_TERMINAL`). Wallets made before recovery phrases existed answer `NO_RECOVERY_PHRASE`: back up
   `~/.degenly/agent-wallet.json`, or withdraw and run setup again.
 - `degenly recover --phrase-file <path>` (or the words piped on stdin to `degenly recover`): rebuilds the agent
   wallet on a new computer. The words are never taken as a command argument. It never overwrites an existing
-  agent wallet (`WALLET_EXISTS`) and prints only the address.
+  agent wallet (`WALLET_EXISTS`) and prints only the address. It writes `~/.degenly/recovery.json` again: delete it
+  with `degenly recovery-phrase` (type DELETE).
 
 Anyone with the phrase can take the agent wallet's funds; never paste it into a chat or give it to an agent.
 

@@ -234,6 +234,56 @@ export function recoveryWords(home: string): { ok: true; words: string[]; addres
   }
 }
 
+/**
+ * DGAJ34 (DGAJ31 G-1): after the human wrote the 12 words down, `recovery.json` can be removed so no file on this
+ * computer holds the phrase any more. Next to it, `recovery-deleted.json` records ONLY the public address whose
+ * phrase was removed (`{"v":1,"address":"..."}`), so `degenly recovery-phrase` can tell "deleted by you" apart
+ * from "wallet older than recovery phrases". It holds no secret.
+ */
+export const RECOVERY_DELETED_FILE_NAME = "recovery-deleted.json";
+
+/** The marker path (see RECOVERY_DELETED_FILE_NAME). */
+export function recoveryDeletedPath(home: string): string {
+  return join(degenlyDir(home), RECOVERY_DELETED_FILE_NAME);
+}
+
+/**
+ * DGAJ34: deletes `~/.degenly/recovery.json` and nothing else. The path comes from the constant (no path argument);
+ * `agent-wallet.json`, `owner.json`, `credentials.json` and every other file stay. The wallet keeps working (its key
+ * is in `agent-wallet.json`). Before the delete, the marker gets the wallet's public address (best effort: a marker
+ * that cannot be written never stops the delete). Called by the CLI only after the human typed DELETE in a TTY.
+ */
+export function deleteRecoveryFile(home: string): { ok: true } | { ok: false; error: "NO_RECOVERY_PHRASE" | "RECOVERY_DELETE_FAILED" } {
+  const file = recoveryPath(home);
+  if (!existsSync(file)) return { ok: false, error: "NO_RECOVERY_PHRASE" };
+  const w = loadWallet(home);
+  if (w.ok) {
+    try {
+      writeFileSync(recoveryDeletedPath(home), JSON.stringify({ v: 1, address: w.wallet.address }), { mode: 0o600 });
+    } catch {
+      // the marker only picks the message `recovery-phrase` shows later
+    }
+  }
+  try {
+    unlinkSync(file);
+  } catch {
+    return { ok: false, error: "RECOVERY_DELETE_FAILED" };
+  }
+  return existsSync(file) ? { ok: false, error: "RECOVERY_DELETE_FAILED" } : { ok: true };
+}
+
+/** DGAJ34: true when `recovery.json` is gone because the human deleted it for THIS wallet (the marker's address). */
+export function recoveryDeletedFor(home: string, address: string): boolean {
+  if (existsSync(recoveryPath(home))) return false;
+  try {
+    const v: unknown = JSON.parse(readFileSync(recoveryDeletedPath(home), "utf8"));
+    const o = typeof v === "object" && v !== null ? (v as { v?: unknown; address?: unknown }) : {};
+    return o.v === 1 && o.address === address;
+  } catch {
+    return false;
+  }
+}
+
 /** Reads the wallet. Missing → NO_WALLET; anything else than a valid 64-byte keypair → WALLET_CORRUPT (file untouched). */
 export function loadWallet(home: string): { ok: true; wallet: Signer } | { ok: false; error: "NO_WALLET" | "WALLET_CORRUPT" } {
   const file = walletPath(home);

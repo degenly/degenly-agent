@@ -67,6 +67,8 @@ $ degenly demo buy bonk 0.1 --json        # exit code 2
    Anyone with the phrase can take the agent wallet's funds; never paste it into a chat or give it to an agent.
    `degenly recovery-phrase` and `degenly recover` are for the human in their own terminal only: never run them and
    never ask for the words (they refuse with `RECOVERY_NEEDS_TERMINAL`).
+   Never run `degenly recovery-phrase`, `degenly recover` or `degenly withdraw` through a pseudo-terminal (pty / script / expect). They are for the human only.
+   Use this phrase only for the agent wallet. Do not add accounts to it or use it as your main wallet: anyone who reads ~/.degenly/recovery.json gets every account of this phrase.
 5. **Spending limits belong to the human.** They are set only on degenly.app `/bot`. Never try to raise them or
    work around a `SPEND_LIMIT` / `LOCAL_SPEND_LIMIT` refusal (for example by splitting a trade).
 6. **No investment advice.** No price predictions, no promises of returns, no "buy now". Report facts (price,

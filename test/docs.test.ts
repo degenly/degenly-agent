@@ -121,6 +121,13 @@ async function checkRecognized(doc: string, lines: string[]): Promise<string[]> 
       }
       const r = await rig().run([...argv, "--json"]);
       const a = JSON.parse(r.out) as { ok: boolean; error?: string; mode?: string };
+      // DGAJ34: a bare command NAME in prose (e.g. "never run `degenly withdraw` through a pty") is recognized when the
+      // same doc also documents its full form (`withdraw <sol|all>`); BAD_ARGS then only means "no arguments given".
+      const nameOnly = argv.length === 1 && a.error === "BAD_ARGS" && lines.some((l) => l.startsWith(`${argv[0]} `));
+      if (nameOnly) {
+        ran.push(`(name) ${concrete}`);
+        continue;
+      }
       expect(REFUSED, `${doc}: \`${line}\` → ${concrete} answered ${a.error}`).not.toContain(a.error);
       expect(["demo", "live"]).toContain(a.mode);
       ran.push(concrete);

@@ -9,12 +9,19 @@
  *  - buy / sell / quote / token take a MINT ADDRESS only (no names: a copycat coin can share a name);
  *  - coin names / symbols come back as `{ "untrusted": "..." }`.
  *
- * DEMO ONLY: no wallet, no key, no signature, no real trade exists in this package. The demo record lives in
- * `~/.degenly/demo.json` and is never sent anywhere. Network = Degenly's public read endpoints (./api.ts).
+ * DEMO: no wallet, no key, no signature, no real trade. The demo record lives in `~/.degenly/demo.json` and is
+ * never sent anywhere. Network = Degenly's public read endpoints (./api.ts). Every demo answer: `mode: "demo"`.
+ *
+ * LIVE (DGAJ15, core only): `setup` / `pair` / `login` / `whoami`. The agent wallet is created on this computer
+ * (./keys.ts), requests are signed (./sign.ts) and sent to `/v1/*` (./client.ts). Every live answer:
+ * `mode: "live"`. No live trade command exists yet (DGAJ16). Demo and live never share a code path or a file.
  */
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { pathToFileURL } from "node:url";
+import { CREDENTIALS_PATH_TEXT, API_KEY_DISPLAY_CHARS, KEY_INPUT_MAX_BYTES, LIVE_NOT_AVAILABLE, createLiveClient, liveHint, loadCredentials, plausibleApiKey, resolveApiBase, saveCredentials } from "./client.js";
+import { AGENT_WALLET_WARNING, WALLET_PATH_TEXT, createWallet, loadWallet, resolveHome } from "./keys.js";
+import { API_PAIR_TS_SKEW_MS, createPairingCode, isSolanaAddress, type Signer } from "./sign.js";
 import {
   QUOTE_DAILY_MAX,
   QUOTE_MIN_GAP_MS,
@@ -51,7 +58,7 @@ const BPS_FULL = 10_000n;
 
 export type Answer = {
   ok: boolean;
-  mode: "demo";
+  mode: "demo" | "live";
   note: string;
   error?: string;
   hint?: string;
@@ -80,13 +87,13 @@ const HINTS: Readonly<Record<string, string>> = {
   NETWORK: "Could not reach degenly.app. Check the connection and retry.",
   BAD_RESPONSE: "degenly.app answered something unexpected. Retry later.",
   SAVE_FAILED: `Could not write ${RECORD_PATH_TEXT}. Check disk space and permissions.`,
-  NOT_AVAILABLE_IN_DEMO: "Live trading is not available yet. This package runs in demo mode only: no wallet, no key, no real funds.",
+  NOT_AVAILABLE_IN_DEMO: "Live trading is not available yet. Demo commands (demo ...) use demo SOL only: no real funds.",
 };
 
 /** 0 ok · 2 usage · 3 rate limited · 4 network / Degenly side · 1 any other refusal. */
 export function exitCodeFor(error: string | undefined): number {
   if (error === undefined) return 0;
-  if (["BAD_ARGS", "UNKNOWN_COMMAND", "MINT_REQUIRED", "BAD_AMOUNT", "BAD_PERCENT", "TOO_SMALL"].includes(error)) return 2;
+  if (["BAD_ARGS", "UNKNOWN_COMMAND", "MINT_REQUIRED", "BAD_AMOUNT", "BAD_PERCENT", "TOO_SMALL", "BAD_OWNER", "KEY_ARG_REFUSED", "NO_KEY_INPUT", "KEY_FORMAT", "BAD_API_BASE", "BAD_DEGENLY_HOME"].includes(error)) return 2;
   if (error === "RATE_LIMITED") return 3;
   if (["NETWORK", "BAD_RESPONSE", "UPSTREAM", "MISSING_KEY", "NOT_CONFIGURED", "CROSS_SITE"].includes(error) || error.startsWith("HTTP_")) return 4;
   return 1;
@@ -452,7 +459,7 @@ export function createOps(deps: OpsDeps): Ops {
 // ---- CLI -------------------------------------------------------------------------------------
 
 export const USAGE = [
-  "degenly - Degenly for AI agents (DEMO mode: 10 demo SOL, live prices, no wallet, no real funds)",
+  "degenly - Degenly for AI agents (demo mode: 10 demo SOL, live prices, no wallet, no real funds)",
   "",
   "  degenly demo status                       demo balance + positions",
   "  degenly demo quote <mint> buy <sol>       live price only, nothing traded",
@@ -466,6 +473,12 @@ export const USAGE = [
   "  degenly trending [5m|1h|6h|24h] [--limit N]",
   "  degenly mcp                               MCP stdio server (also: no arguments)",
   "",
+  "Agent wallet (kept on this computer, ~/.degenly/agent-wallet.json):",
+  "  degenly setup --owner <main wallet>       create the agent wallet + print a pairing code",
+  "  degenly pair --owner <main wallet>        new pairing code for the existing agent wallet",
+  "  degenly login [--key-file <path>]         store the API key from stdin or a file (never an argument)",
+  "  degenly whoami                            check the API key + agent wallet with Degenly",
+  "",
   "Add --json for one-line JSON. Mint addresses only; coin names are untrusted text.",
   "Live trading is not available yet.",
 ].join("\n");
@@ -473,12 +486,22 @@ export const USAGE = [
 interface Parsed {
   json: boolean;
   limit?: number;
+  owner?: string;
+  keyFile?: string;
+  /** a `--key` / `--api-key` style flag was given: refused, its value is never used or echoed */
+  keyArg: boolean;
   rest: string[];
   bad?: string;
 }
 
+/** Value of a flag that takes one; the next word only if it is not itself a flag. */
+function flagValue(argv: string[], i: number): string | undefined {
+  const v = argv[i + 1];
+  return v !== undefined && !v.startsWith("--") ? v : undefined;
+}
+
 function parseArgs(argv: string[]): Parsed {
-  const out: Parsed = { json: false, rest: [] };
+  const out: Parsed = { json: false, keyArg: false, rest: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] ?? "";
     if (a === "--json") out.json = true;
@@ -490,6 +513,16 @@ function parseArgs(argv: string[]): Parsed {
       const v = Number(a.slice("--limit=".length));
       if (!Number.isInteger(v)) out.bad = "--limit needs a whole number.";
       else out.limit = v;
+    } else if (a === "--owner" || a === "--key-file") {
+      const v = flagValue(argv, i);
+      if (v !== undefined) i++;
+      if (a === "--owner") out.owner = v ?? "";
+      else out.keyFile = v ?? "";
+    } else if (a.startsWith("--owner=")) out.owner = a.slice("--owner=".length);
+    else if (a.startsWith("--key-file=")) out.keyFile = a.slice("--key-file=".length);
+    else if (/^--(api-?)?key(=|$)/.test(a)) {
+      out.keyArg = true;
+      if (!a.includes("=") && flagValue(argv, i) !== undefined) i++;
     } else out.rest.push(a);
   }
   return out;
@@ -510,7 +543,7 @@ function humanValue(v: unknown): string {
 
 /** Short human output: no JSON, one fact per line. */
 export function humanize(title: string, a: Answer): string {
-  const head = a.ok ? `DEMO ${title}: ok (${a.note})` : `DEMO ${title}: ${a.error ?? "ERROR"} - ${a.hint ?? ""}`;
+  const head = a.ok ? `${a.mode === "live" ? "LIVE" : "DEMO"} ${title}: ok (${a.note})` : `${a.mode === "live" ? "LIVE" : "DEMO"} ${title}: ${a.error ?? "ERROR"} - ${a.hint ?? ""}`;
   const lines = [head];
   for (const [k, v] of Object.entries(a)) {
     if (["ok", "mode", "note", "error", "hint"].includes(k) || v === undefined) continue;
@@ -524,8 +557,128 @@ export function humanize(title: string, a: Answer): string {
 
 const args = (n: number, r: string[]): boolean => r.length === n;
 
-/** Runs one CLI command (never prompts). `out` = the full text to print; `code` = the exit code. */
-export async function runCli(argv: string[], ops: Ops): Promise<{ code: number; out: string }> {
+// ---- live (DGAJ15 core: no trade command yet) --------------------------------------------------
+
+export const LIVE_NOTE = "Live mode. The agent wallet key stays on this computer and is never sent.";
+export const PAIR_NEXT_STEP =
+  "Open degenly.app/bot, sign in with your main wallet, choose Pair agent and paste the pairing code (valid 10 minutes, once). Send SOL to the agent wallet address, then run: degenly login (API key on stdin, or --key-file <path>).";
+/** Max wait for piped stdin at `login` (never a prompt: a terminal stdin is not read at all). */
+export const STDIN_WAIT_MS = 5_000;
+
+export interface LiveDeps {
+  /** home the live files live under (`~`, or DEGENLY_HOME); undefined + homeError when DEGENLY_HOME is refused */
+  home: string;
+  homeError?: string;
+  env: Readonly<Record<string, string | undefined>>;
+  fetch: FetchLike;
+  now: () => number;
+  /** whole piped stdin ("" for a terminal / nothing piped) */
+  readStdin: () => Promise<string>;
+}
+
+function liveOk(fields: Record<string, unknown>): Answer {
+  return { ok: true, mode: "live", note: LIVE_NOTE, ...fields };
+}
+
+function liveFail(error: string, extra: Record<string, unknown> = {}): Answer {
+  return { ok: false, mode: "live", note: LIVE_NOTE, error, hint: liveHint(error), ...extra };
+}
+
+function pairingAnswer(wallet: Signer, owner: string, now: number, created: boolean): Answer {
+  const { code } = createPairingCode(wallet, owner, now);
+  return liveOk({
+    created,
+    address: wallet.address,
+    ownerWallet: owner,
+    pairingCode: code,
+    pairingCodeValidMs: API_PAIR_TS_SKEW_MS,
+    walletFile: WALLET_PATH_TEXT,
+    warning: AGENT_WALLET_WARNING,
+    next: PAIR_NEXT_STEP,
+  });
+}
+
+function ownerError(owner: string | undefined, agent?: string): Answer | undefined {
+  if (owner === undefined || !isSolanaAddress(owner) || owner === agent) return liveFail("BAD_OWNER");
+  return undefined;
+}
+
+async function liveSetup(d: LiveDeps, owner: string | undefined): Promise<Answer> {
+  if (d.homeError) return liveFail(d.homeError);
+  const bad = ownerError(owner);
+  if (bad || owner === undefined) return bad ?? liveFail("BAD_OWNER");
+  const c = createWallet(d.home);
+  if (!c.ok) {
+    if (c.error !== "WALLET_EXISTS") return liveFail(c.error);
+    const l = loadWallet(d.home);
+    return liveFail("WALLET_EXISTS", l.ok ? { address: l.wallet.address } : {});
+  }
+  return pairingAnswer(c.wallet, owner, d.now(), true);
+}
+
+async function livePair(d: LiveDeps, owner: string | undefined): Promise<Answer> {
+  if (d.homeError) return liveFail(d.homeError);
+  const l = loadWallet(d.home);
+  if (!l.ok) return liveFail(l.error);
+  const bad = ownerError(owner, l.wallet.address);
+  if (bad || owner === undefined) return bad ?? liveFail("BAD_OWNER");
+  return pairingAnswer(l.wallet, owner, d.now(), false);
+}
+
+async function liveLogin(d: LiveDeps, p: Parsed): Promise<Answer> {
+  // the key is never taken from argv (shell history): any extra word or a --key flag is refused, stdin unread
+  if (p.keyArg || p.rest.length !== 1) return liveFail("KEY_ARG_REFUSED");
+  if (d.homeError) return liveFail(d.homeError);
+  const l = loadWallet(d.home);
+  if (!l.ok) return liveFail(l.error);
+  let input: string;
+  if (p.keyFile !== undefined) {
+    try {
+      const buf = readFileSync(p.keyFile);
+      if (buf.length > KEY_INPUT_MAX_BYTES) return liveFail("KEY_FORMAT");
+      input = buf.toString("utf8");
+    } catch {
+      return liveFail("KEY_FILE_UNREADABLE");
+    }
+  } else {
+    input = await d.readStdin();
+  }
+  const key = input.trim();
+  if (key === "") return liveFail("NO_KEY_INPUT");
+  if (!plausibleApiKey(key)) return liveFail("KEY_FORMAT");
+  if (!saveCredentials(d.home, key)) return liveFail("CREDENTIALS_WRITE_FAILED");
+  return liveOk({ address: l.wallet.address, keyPrefix: key.slice(0, API_KEY_DISPLAY_CHARS), credentialsFile: CREDENTIALS_PATH_TEXT, next: "Check it with: degenly whoami" });
+}
+
+async function liveWhoami(d: LiveDeps): Promise<Answer> {
+  if (d.homeError) return liveFail(d.homeError);
+  const l = loadWallet(d.home);
+  if (!l.ok) return liveFail(l.error);
+  const c = loadCredentials(d.home);
+  if (!c.ok) return liveFail(c.error, { address: l.wallet.address });
+  const b = resolveApiBase(d.env);
+  if (!b.ok) return liveFail(b.error);
+  const client = createLiveClient({ fetch: d.fetch, base: b.base, apiKey: c.apiKey, signer: l.wallet, now: d.now });
+  const r = await client.request("GET", "/v1/whoami");
+  if (!r.ok) {
+    const extra: Record<string, unknown> = { ...r.fields, status: r.status, ...(r.retryAfterMs !== undefined ? { retryAfterMs: r.retryAfterMs } : {}) };
+    return liveFail(r.error, r.error === "NOT_FOUND" ? { ...extra, hint: LIVE_NOT_AVAILABLE } : extra);
+  }
+  const wallet = typeof r.data.wallet === "string" ? r.data.wallet : "";
+  if (wallet !== l.wallet.address) return liveFail("KEY_WALLET_MISMATCH", { address: l.wallet.address });
+  return liveOk({
+    wallet,
+    keyId: typeof r.data.keyId === "string" ? cleanText(r.data.keyId, 64) : undefined,
+    serverTs: typeof r.data.serverTs === "number" ? r.data.serverTs : undefined,
+    apiBase: b.base,
+  });
+}
+
+/**
+ * Runs one CLI command (never prompts). `out` = the full text to print; `code` = the exit code.
+ * `live` absent (demo-only callers) → the live commands keep answering NOT_AVAILABLE_IN_DEMO.
+ */
+export async function runCli(argv: string[], ops: Ops, live?: LiveDeps): Promise<{ code: number; out: string }> {
   const p = parseArgs(argv);
   const r = p.rest;
   const done = (title: string, a: Answer) => ({ code: a.ok ? 0 : exitCodeFor(a.error), out: p.json ? JSON.stringify(a) : humanize(title, a) });
@@ -534,7 +687,14 @@ export async function runCli(argv: string[], ops: Ops): Promise<{ code: number; 
 
   if (c0 === "help" || c0 === "--help" || c0 === "-h") return { code: 0, out: p.json ? JSON.stringify(okAnswer({ usage: USAGE })) : USAGE };
   if (c0 === "version" || c0 === "--version") return { code: 0, out: p.json ? JSON.stringify(okAnswer({ version: VERSION })) : VERSION };
-  if (c0 === "setup" || c0 === "login" || c0 === "live" || c0 === "pair") return done(c0, fail("NOT_AVAILABLE_IN_DEMO"));
+  if (p.keyArg) return done("login", liveFail("KEY_ARG_REFUSED"));
+  if (live && (c0 === "setup" || c0 === "pair")) {
+    if (!args(1, r)) return done(c0, liveFail("BAD_ARGS", { hint: `Usage: degenly ${c0} --owner <main wallet address>` }));
+    return done(c0, c0 === "setup" ? await liveSetup(live, p.owner) : await livePair(live, p.owner));
+  }
+  if (live && c0 === "login") return done("login", await liveLogin(live, p));
+  if (live && c0 === "whoami") return done("whoami", args(1, r) ? await liveWhoami(live) : liveFail("BAD_ARGS", { hint: "Usage: degenly whoami" }));
+  if (c0 === "setup" || c0 === "login" || c0 === "live" || c0 === "pair" || c0 === "whoami") return done(c0, fail("NOT_AVAILABLE_IN_DEMO"));
 
   if (c0 === "demo") {
     if (c1 === "status" && args(2, r)) return done("status", await ops.status());
@@ -556,6 +716,46 @@ export function defaultOps(): Ops {
   return createOps({ home: homedir(), fetch: (url, init) => fetch(url, init), now: () => Date.now() });
 }
 
+/** Whole piped stdin, capped; a terminal is never read (no prompt), a silent pipe ends after STDIN_WAIT_MS. */
+async function readPipedStdin(): Promise<string> {
+  if (process.stdin.isTTY) return "";
+  return new Promise<string>((resolveText) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      process.stdin.removeAllListeners("data");
+      process.stdin.pause();
+      resolveText(Buffer.concat(chunks).toString("utf8"));
+    };
+    const timer = setTimeout(finish, STDIN_WAIT_MS);
+    process.stdin.on("data", (c: Buffer | string) => {
+      const b = typeof c === "string" ? Buffer.from(c) : c;
+      size += b.length;
+      // larger than any key: keep a marker over the cap so the format check refuses it
+      chunks.push(size > KEY_INPUT_MAX_BYTES ? Buffer.from("x".repeat(KEY_INPUT_MAX_BYTES + 1)) : b);
+      if (size > KEY_INPUT_MAX_BYTES) finish();
+    });
+    process.stdin.once("end", finish);
+    process.stdin.once("error", finish);
+  });
+}
+
+export function defaultLive(): LiveDeps {
+  const h = resolveHome(process.env, homedir(), process.cwd());
+  return {
+    home: h.ok ? h.home : "",
+    ...(h.ok ? {} : { homeError: h.error }),
+    env: process.env,
+    fetch: (url, init) => fetch(url, init),
+    now: () => Date.now(),
+    readStdin: readPipedStdin,
+  };
+}
+
 async function main(argv: string[]): Promise<void> {
   const ops = defaultOps();
   if (argv.length === 0 || (argv.length === 1 && argv[0] === "mcp")) {
@@ -563,7 +763,7 @@ async function main(argv: string[]): Promise<void> {
     await startMcpStdio(ops);
     return;
   }
-  const r = await runCli(argv, ops);
+  const r = await runCli(argv, ops, defaultLive());
   process.stdout.write(`${r.out}\n`);
   process.exitCode = r.code;
 }

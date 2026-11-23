@@ -31,7 +31,7 @@ const NOW = 1791594000000;
 const REFUSED = ["UNKNOWN_COMMAND", "BAD_ARGS", "NOT_AVAILABLE_IN_DEMO"];
 
 /** DGAJ22 (E-2): every documented npx command pins the package version (= package.json `version`). */
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 const PINNED = `@degenly/agent@${VERSION}`;
 
 /** DGAJ-S A2 "Kurulum metni" step 3, with the DGAJ22 pinned version. */
@@ -229,10 +229,16 @@ describe("DGAJ17 docs: safety text", () => {
     expect(deny.permissions?.deny).toEqual(["Read(~/.degenly/**)"]);
   });
 
-  it("README says plainly that live trading is not available yet, with no date", () => {
-    expect(README).toContain(LIVE_NOT_AVAILABLE);
+  it("DGAJ24: live trading is open; no doc says it is unavailable or tells the human not to fund; no date", () => {
+    for (const [name, md] of [["README.md", README], ["SKILL.md", SKILL], ["docs/clients.md", CLIENTS]] as const) {
+      expect(md, name).not.toContain(LIVE_NOT_AVAILABLE);
+      expect(md, name).not.toMatch(/not available yet|do not fund|switched off|until live trading/i);
+    }
+    // the A4 warning sits at the top of the README, before the demo section
     const top = README.slice(0, README.indexOf("## Demo mode"));
-    expect(top).toContain(LIVE_NOT_AVAILABLE);
+    expect(top).toContain(AGENT_WALLET_WARNING);
+    expect(README).toContain("## Demo mode\n");
+    expect(README).toContain("Fund the agent wallet with SOL only with what you can afford to lose.");
     for (const md of [README, SKILL, CLIENTS]) {
       expect(md).not.toMatch(/\b(20\d\d-\d\d-\d\d|Q[1-4] 20\d\d|(January|February|March|April|May|June|July|August|September|October|November|December) 20\d\d|coming (soon|in))\b/i);
     }

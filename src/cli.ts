@@ -44,9 +44,9 @@ import { DEMO_START_LAMPORTS, loadDemo, resetDemo, saveDemo, type DemoStateV1 } 
 import { SYMBOL_MAX_CHARS, cleanText, isMint, showUntrusted, untrustedName, untrustedSymbol, type UntrustedText } from "./sanitize.js";
 import { createLiveRead } from "./tools/live-read.js";
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.1.1";
 export const DEMO_NOTE = "Demo trade. No real funds moved.";
-export const LIVE_NOTICE = "Live trading is not available yet. Demo mode: 10 demo SOL, live prices, record kept only on this computer (~/.degenly/demo.json).";
+export const LIVE_NOTICE = "Demo mode: 10 demo SOL, live prices, record kept only on this computer (~/.degenly/demo.json). For live mode the human runs: degenly setup --owner <main wallet address>";
 export const RECORD_PATH_TEXT = "~/.degenly/demo.json";
 export const TRADES_DEFAULT = 20;
 export const TRADES_MAX = 200;
@@ -88,7 +88,7 @@ const HINTS: Readonly<Record<string, string>> = {
   NETWORK: "Could not reach degenly.app. Check the connection and retry.",
   BAD_RESPONSE: "degenly.app answered something unexpected. Retry later.",
   SAVE_FAILED: `Could not write ${RECORD_PATH_TEXT}. Check disk space and permissions.`,
-  NOT_AVAILABLE_IN_DEMO: "Live trading is not available yet. Demo commands (demo ...) use demo SOL only: no real funds.",
+  NOT_AVAILABLE_IN_DEMO: "Live commands do not run here. Demo commands (demo ...) use demo SOL only: no real funds.",
 };
 
 /** 0 ok · 2 usage · 3 rate limited · 4 network / Degenly side · 1 any other refusal. */
@@ -566,8 +566,7 @@ const args = (n: number, r: string[]): boolean => r.length === n;
 
 export const LIVE_NOTE = "Live mode. The agent wallet key stays on this computer and is never sent.";
 export const PAIR_NEXT_STEP =
-  "Open degenly.app/bot, sign in with your main wallet, choose Pair agent and paste the pairing code (valid 10 minutes, once), then run: degenly login (API key on stdin, or --key-file <path>). " +
-  `${LIVE_NOT_AVAILABLE} Do not fund the agent wallet until live trading is available.`;
+  'Next: open https://degenly.app/bot, sign in with your main wallet, choose "Pair agent" and paste the pairing code. Then run login with the API key the site shows once. Fund the agent wallet with SOL only with what you can afford to lose.';
 /** Max wait for piped stdin at `login` (never a prompt: a terminal stdin is not read at all). */
 export const STDIN_WAIT_MS = 5_000;
 
@@ -600,7 +599,6 @@ function pairingAnswer(wallet: Signer, owner: string, now: number, created: bool
     pairingCodeValidMs: API_PAIR_TS_SKEW_MS,
     walletFile: WALLET_PATH_TEXT,
     warning: AGENT_WALLET_WARNING,
-    liveTrading: LIVE_NOT_AVAILABLE,
     next: PAIR_NEXT_STEP,
   });
 }

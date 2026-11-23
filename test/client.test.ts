@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FetchLike } from "../src/api.js";
-import { createOps, runCli, type LiveDeps } from "../src/cli.js";
+import { PAIR_NEXT_STEP, createOps, runCli, type LiveDeps } from "../src/cli.js";
 import { CREDENTIALS_FILE_NAME, DEFAULT_API_BASE, LIVE_NOT_AVAILABLE, createLiveClient, loadCredentials, resolveApiBase } from "../src/client.js";
 import { AGENT_WALLET_WARNING, loadWallet, walletPath } from "../src/keys.js";
 import { base58Decode, base58Encode, decodeAgentPairingCode } from "../src/sign.js";
@@ -205,9 +205,13 @@ describe("DGAJ15 CLI: setup", () => {
     expect(s.out).toContain(AGENT_WALLET_WARNING);
     expect(String(a.next)).toContain("degenly.app/bot");
     expect(String(a.next)).toContain("Pair agent");
-    // DGAJ15 fix 1: no live trade command yet -> setup must not steer the user into funding the wallet
-    expect(a.liveTrading).toBe(LIVE_NOT_AVAILABLE);
-    expect(String(a.next)).toContain(LIVE_NOT_AVAILABLE);
+    // DGAJ24: live trading is open -> the pairing answer carries no "not available" field; the next step is the
+    // DGAJ24 sentence word for word (no funding ban any more, the afford-to-lose rule kept)
+    expect(a.liveTrading).toBeUndefined();
+    expect(a.next).toBe(PAIR_NEXT_STEP);
+    expect(String(a.next)).not.toContain(LIVE_NOT_AVAILABLE);
+    expect(String(a.next)).not.toMatch(/do not fund/i);
+    expect(String(a.next)).toContain("only with what you can afford to lose");
     expect(String(a.next)).not.toMatch(/send sol/i);
     expect(s.out).not.toMatch(/send sol/i);
     const d = decodeAgentPairingCode(String(a.pairingCode));
@@ -220,7 +224,8 @@ describe("DGAJ15 CLI: setup", () => {
     expect(h.code).toBe(0);
     expect(h.out).toContain(AGENT_WALLET_WARNING);
     expect(h.out).toContain("LIVE");
-    expect(h.out).toContain(LIVE_NOT_AVAILABLE);
+    expect(h.out).not.toContain(LIVE_NOT_AVAILABLE);
+    expect(h.out).toContain(PAIR_NEXT_STEP);
     expect(h.out).not.toMatch(/send sol/i);
     // no network at setup
     expect(r.server.calls).toHaveLength(0);
@@ -237,7 +242,7 @@ describe("DGAJ15 CLI: setup", () => {
     const p = JSON.parse((await r.cli(["pair", "--owner", OWNER, "--json"])).out) as Record<string, unknown>;
     expect(p).toMatchObject({ ok: true, mode: "live", address: first.address, warning: AGENT_WALLET_WARNING });
     expect(p.pairingCode).not.toBe(first.pairingCode);
-    expect(p.liveTrading).toBe(LIVE_NOT_AVAILABLE);
+    expect(p.liveTrading).toBeUndefined();
     expect(String(p.next)).not.toMatch(/send sol/i);
     expect(readFileSync(walletPath(r.home)).equals(bytes)).toBe(true);
   });

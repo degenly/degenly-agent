@@ -79,7 +79,9 @@ describe("DGAJD1 commands", () => {
     expect(a.note).toBe(DEMO_NOTE);
     expect(DEMO_NOTE).toBe("Demo trade. No real funds moved.");
     expect(a.notice).toBe(LIVE_NOTICE);
-    expect(LIVE_NOTICE).toContain("Live trading is not available yet.");
+    expect(LIVE_NOTICE).not.toMatch(/not available yet/i);
+    expect(LIVE_NOTICE).toMatch(/^Demo mode: /);
+    expect(LIVE_NOTICE).toContain("degenly setup --owner <main wallet address>");
     expect(a.balanceSol).toBe("10");
     const b = await ops.status();
     expect(b.notice).toBeUndefined();

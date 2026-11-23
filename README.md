@@ -4,37 +4,36 @@ Degenly for AI agents: one package with an MCP server, a CLI and a `SKILL.md`.
 Your AI app (Claude Code, Gemini CLI, Cursor, Claude Desktop) uses it to look up Solana tokens and trade them on Degenly.
 Demo mode needs nothing; live mode uses a separate agent wallet whose key is created and kept on your computer.
 
-**Live trading is not available yet.** Degenly's Bot API (`/v1/*`) is switched off today and answers 404, so the live
-tools and commands below cannot trade yet. Demo mode works now. Do not fund the agent wallet until live trading is available.
+Live mode trades real SOL from the agent wallet after the 3 setup steps below; every live buy / sell asks for your confirmation first (on by default).
+Spending limits apply to trades made through Degenly. An agent that can read files on this computer could read the agent wallet key and move funds outside Degenly. Fund the agent wallet with only what you can afford to lose.
 
-## Demo mode (works now)
+## Demo mode
 
 10 demo SOL, live Degenly prices, no wallet, no key, no account, no browser step.
 The demo record lives only on your computer in `~/.degenly/demo.json`; nothing about it is sent to Degenly.
 
-One command, no wallet: `npx -y @degenly/agent@0.1.0 demo status --json`
+One command, no wallet: `npx -y @degenly/agent@0.1.1 demo status --json`
 
 ## Live mode setup (3 steps)
 
-1. `npx -y @degenly/agent@0.1.0 setup --owner <main wallet address>`: creates the agent wallet on this computer
+1. `npx -y @degenly/agent@0.1.1 setup --owner <main wallet address>`: creates the agent wallet on this computer
    (`~/.degenly/agent-wallet.json`) and prints its address and a pairing code (valid 10 minutes, once).
 2. On degenly.app open `/bot`, sign in with your main wallet, choose "Pair agent" and paste the pairing code.
-   The site shows an API key once. Fund the agent wallet with SOL only after live trading is available, and only
-   with what you can afford to lose.
-3. `npx -y @degenly/agent@0.1.0 login --key-file <path>`: stores the API key in `~/.degenly/credentials.json`
+   The site shows an API key once. Fund the agent wallet with SOL only with what you can afford to lose.
+3. `npx -y @degenly/agent@0.1.1 login --key-file <path>`: stores the API key in `~/.degenly/credentials.json`
    (or pipe the key on stdin to `login`; the key is never taken as a command argument).
 
-Check it: `npx -y @degenly/agent@0.1.0 whoami`. A new pairing code for the same wallet:
-`npx -y @degenly/agent@0.1.0 pair --owner <main wallet address>` (`setup` never overwrites an existing wallet).
+Check it: `npx -y @degenly/agent@0.1.1 whoami`. A new pairing code for the same wallet:
+`npx -y @degenly/agent@0.1.1 pair --owner <main wallet address>` (`setup` never overwrites an existing wallet).
 
 ## Add Degenly to your AI app (one line per client)
 
-- Claude Code: `claude mcp add degenly -- npx -y @degenly/agent@0.1.0`
-- Gemini CLI: `gemini mcp add degenly npx -y @degenly/agent@0.1.0`
+- Claude Code: `claude mcp add degenly -- npx -y @degenly/agent@0.1.1`
+- Gemini CLI: `gemini mcp add degenly npx -y @degenly/agent@0.1.1`
 - Cursor (`mcp.json`) / Claude Desktop (`claude_desktop_config.json`):
 
 ```json
-{ "mcpServers": { "degenly": { "command": "npx", "args": ["-y", "@degenly/agent@0.1.0"] } } }
+{ "mcpServers": { "degenly": { "command": "npx", "args": ["-y", "@degenly/agent@0.1.1"] } } }
 ```
 
 ChatGPT does not support local MCP servers, so it cannot use this package. The Gemini web app: not verified.
@@ -112,7 +111,7 @@ Errors: non-zero exit (0 ok, 2 usage, 3 rate limited, 4 network / Degenly, 1 oth
 | `LOW_SOL` / `NO_HOLD` | demo: not enough demo SOL / no demo position |
 | `RATE_LIMITED` | wait `retryAfterMs`, then retry |
 | `NETWORK` / `BAD_RESPONSE` | Degenly unreachable or unexpected answer |
-| `NOT_FOUND` | the Bot API is off: live trading is not available yet |
+| `NOT_FOUND` | the Bot API answered 404 (off right now): nothing was sent; demo mode still works |
 | `NO_WALLET` / `NOT_LOGGED_IN` / `LIVE_NOT_READY` | run setup, pair on degenly.app/bot, then login |
 | `WALLET_EXISTS` | an agent wallet exists and is never overwritten; use `pair` for a new code |
 | `KEY_ARG_REFUSED` | the API key was given as an argument; use stdin or `--key-file` |

@@ -1,6 +1,6 @@
 ---
 name: degenly
-description: Use when asked to look up, try or trade Solana tokens on Degenly. Demo mode (degenly_*, 10 demo SOL, no real funds) works now; live mode (degenly_live_*, the agent wallet, real SOL, the human confirms each trade) is not available yet.
+description: Use when asked to look up, try or trade Solana tokens on Degenly. Demo mode (degenly_*, 10 demo SOL, no real funds) works now; live mode (degenly_live_*, the agent wallet, real SOL, the human confirms each trade) works after the human sets it up.
 ---
 
 # Degenly for agents (skill)
@@ -10,7 +10,7 @@ description: Use when asked to look up, try or trade Solana tokens on Degenly. D
 - **Demo** (`degenly_*` tools, CLI `degenly demo status` and the other `demo` commands): 10 demo SOL at live Degenly prices. The record lives only in
   `~/.degenly/demo.json`. No wallet, no key, no account. Every answer has `"mode":"demo"`.
 - **Live** (`degenly_live_*` tools, CLI `degenly whoami` and the `live` read commands): the agent wallet, REAL SOL. Every answer
-  has `"mode":"live"`. Live trading is not available yet (Degenly's `/v1` answers `NOT_FOUND`); say so plainly.
+  has `"mode":"live"`. If a live tool answers `NOT_FOUND`, Degenly's Bot API is off right now; say so plainly.
 
 Never mix them: a demo result is never a real trade, and a live result is never a demo. Always tell the human which
 mode an answer came from.
@@ -76,7 +76,7 @@ Read `hint` first. Then:
 | `BAD_AMOUNT` / `BAD_PERCENT` / `BAD_ARGS` / `UNKNOWN_COMMAND` | fix the arguments (see `degenly help`); do not guess a different trade |
 | `RATE_LIMITED` | wait `retryAfterMs` once; never retry in a loop |
 | `NETWORK` / `BAD_RESPONSE` | tell the human; retry a read later. Never retry a live buy / sell on your own |
-| `NOT_FOUND` | live trading is not available yet; offer demo mode |
+| `NOT_FOUND` | Degenly's Bot API is off right now; nothing was sent; offer demo mode |
 | `NO_WALLET` / `NOT_LOGGED_IN` / `LIVE_NOT_READY` / `KEY_INVALID` / `KEY_WALLET_MISMATCH` | tell the human which setup step is missing; do not run setup or login yourself |
 | `SPEND_LIMIT` / `SPEND_LIMIT_NOT_SET` / `LOCAL_SPEND_LIMIT` / `LOCAL_LIMIT_UNKNOWN` | nothing was sent; tell the human the limit (only they can change it on degenly.app `/bot`) |
 | `TOKEN_BLOCKED` | buying this token through the API is not allowed (see `reason`); do not look for another way |

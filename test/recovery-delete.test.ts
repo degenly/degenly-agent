@@ -146,15 +146,15 @@ describe("DGAJ34 recovery-phrase: the DELETE step", () => {
 
   it("after the delete: recovery-phrase shows the information line, exit 0, no word, no question", async () => {
     const r = rig({ interactive: true, answer: "DELETE" });
-    const { words } = await setup(r);
+    await setup(r);
     await r.cli(["recovery-phrase"]);
     const before = r.prompts.length;
     const again = await r.cli(["recovery-phrase"]);
     expect(again.code).toBe(0);
+    // exact fixed text: no word can be in it (a per-word check collides with random BIP39 words like "this" / "only")
     expect(again.out).toBe(RECOVERY_GONE_TEXT);
     expect(r.prompts).toHaveLength(before);
     expect(wordsOf(again.out)).toEqual([]);
-    for (const w of words) expect(again.out.split(/\W+/)).not.toContain(w);
   });
 
   it("an OLD wallet (never had recovery.json) still answers NO_RECOVERY_PHRASE, not the deleted line", async () => {
@@ -211,9 +211,23 @@ describe("DGAJ34 recover: rebuilds recovery.json + the delete reminder", () => {
     const out = await r2.cli(["recover", "--phrase-file", f, "--json"]);
     const a = JSON.parse(out.out) as Record<string, unknown>;
     expect(a).toMatchObject({ ok: true, address, recoveryReminder: RECOVERY_DELETE_REMINDER });
+    // no word leaks: the answer has exactly these fields, all fixed texts or the public address
+    // (a per-word check collides with random BIP39 words like "address" / "next")
+    expect(Object.keys(a).sort()).toEqual(["address", "mode", "next", "note", "ok", "recoveryFile", "recoveryReminder", "walletFile"]);
+    expect(out.out).not.toContain(words.join(" "));
+    expect(wordsOf(out.out)).toEqual([]);
+    // every field but the address is the same for ANOTHER phrase, so no field depends on the words
+    const r3 = rig();
+    const other = await setup(r3);
+    const f3 = join(mkdtempSync(join(tmpdir(), "dgaj34-pf-")), "phrase.txt");
+    writeFileSync(f3, other.words.join(" "));
+    const b = JSON.parse((await rig().cli(["recover", "--phrase-file", f3, "--json"])).out) as Record<string, unknown>;
+    expect(b.address).toBe(other.address);
+    expect({ ...b, address: "" }).toEqual({ ...a, address: "" });
     const human = await rig().cli(["recover", "--phrase-file", f]);
     expect(human.out).toContain(RECOVERY_DELETE_REMINDER);
-    for (const w of words) expect(out.out.split(/\W+/)).not.toContain(w);
+    expect(human.out).not.toContain(words.join(" "));
+    expect(wordsOf(human.out)).toEqual([]);
     expect(existsSync(recoveryPath(r2.home))).toBe(true);
     expect((await r2.cli(["recovery-phrase"])).out).toBe(RECOVERY_GONE_TEXT);
     expect(existsSync(recoveryPath(r2.home))).toBe(false);

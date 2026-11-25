@@ -31,7 +31,7 @@ const NOW = 1791594000000;
 const REFUSED = ["UNKNOWN_COMMAND", "BAD_ARGS", "NOT_AVAILABLE_IN_DEMO"];
 
 /** DGAJ22 (E-2): every documented npx command pins the package version (= package.json `version`). */
-const VERSION = "0.2.0";
+const VERSION = "0.2.1";
 const PINNED = `@degenly/agent@${VERSION}`;
 
 /** DGAJ-S A2 "Kurulum metni" step 3, with the DGAJ22 pinned version. */
@@ -287,5 +287,62 @@ describe("DGAJ17 docs: safety text", () => {
       expect(md, name).not.toMatch(/\bexchange\b|\bcustody\b|\bpayments?\b/i);
       expect(md, name).not.toMatch(/guaranteed|profit(s|able)?\b|to the moon|\b\d+x returns?\b/i);
     }
+  });
+});
+
+describe("DGAJ45 MCP directory files: server.json + glama.json match package.json", () => {
+  const PKG45 = JSON.parse(read("package.json")) as { name: string; version: string; mcpName?: string; homepage?: string; keywords: string[]; files: string[] };
+
+  it("server.json is valid JSON and agrees with package.json (name = mcpName, versions, identifier, stdio, description <= 100)", () => {
+    const sj = JSON.parse(read("server.json")) as {
+      $schema: string;
+      name: string;
+      title: string;
+      description: string;
+      version: string;
+      repository: { url: string; source: string };
+      packages: { registryType: string; identifier: string; version: string; transport: { type: string } }[];
+    };
+    expect(PKG45.mcpName).toBe("io.github.degenly/degenly-agent");
+    expect(sj.name).toBe(PKG45.mcpName);
+    expect(sj.version).toBe(PKG45.version);
+    expect(sj.packages.length).toBe(1);
+    expect(sj.packages[0]?.version).toBe(PKG45.version);
+    expect(sj.packages[0]?.identifier).toBe(PKG45.name);
+    expect(sj.packages[0]?.registryType).toBe("npm");
+    expect(sj.packages[0]?.transport.type).toBe("stdio");
+    expect(sj.description.length).toBeGreaterThan(0);
+    expect(sj.description.length).toBeLessThanOrEqual(100);
+    expect(sj.repository.source).toBe("github");
+  });
+
+  it("glama.json is valid JSON and names at least one maintainer", () => {
+    const gj = JSON.parse(read("glama.json")) as { $schema: string; maintainers: string[] };
+    expect(gj.$schema).toBe("https://glama.ai/mcp/schemas/server.json");
+    expect(Array.isArray(gj.maintainers)).toBe(true);
+    expect(gj.maintainers.length).toBeGreaterThan(0);
+  });
+
+  it("server.json and glama.json are not in package.json `files` (they stay out of the npm package)", () => {
+    expect(PKG45.files).not.toContain("server.json");
+    expect(PKG45.files).not.toContain("glama.json");
+  });
+
+  it("version 0.2.1 everywhere: package.json, npm-shrinkwrap.json root, CLI VERSION; homepage + directory keywords", async () => {
+    const { VERSION: CLI_VERSION } = await import("../src/cli.js");
+    const sw = JSON.parse(read("npm-shrinkwrap.json")) as { version: string; packages: Record<string, { version?: string }> };
+    expect(PKG45.version).toBe(VERSION);
+    expect(CLI_VERSION).toBe(PKG45.version);
+    expect(sw.version).toBe(PKG45.version);
+    expect(sw.packages[""]?.version).toBe(PKG45.version);
+    expect(PKG45.homepage).toBe("https://degenly.app/bot");
+    for (const k of ["degenly", "mcp", "solana", "ai-agent", "memecoin", "cli", "mcp-server", "model-context-protocol", "claude-code", "cursor", "gemini-cli", "trading"]) {
+      expect(PKG45.keywords, k).toContain(k);
+    }
+  });
+
+  it("README names the supported clients and links docs/clients.md before the demo section", () => {
+    const top = README.slice(0, README.indexOf("## Demo mode"));
+    expect(top).toContain("Works with Claude Code, Cursor, Gemini CLI and Claude Desktop. Client setup: [docs/clients.md](docs/clients.md).");
   });
 });

@@ -47,7 +47,7 @@ import { SYMBOL_MAX_CHARS, cleanText, isMint, showUntrusted, untrustedName, untr
 import { createLiveRead } from "./tools/live-read.js";
 import { OWNER_PATH_TEXT, createLiveWithdraw, saveOwner, terminalConfirm } from "./tools/live-withdraw.js";
 
-export const VERSION = "0.2.0";
+export const VERSION = "0.2.1";
 export const DEMO_NOTE = "Demo trade. No real funds moved.";
 export const LIVE_NOTICE = "Demo mode: 10 demo SOL, live prices, record kept only on this computer (~/.degenly/demo.json). For live mode the human runs: degenly setup --owner <main wallet address>";
 export const RECORD_PATH_TEXT = "~/.degenly/demo.json";

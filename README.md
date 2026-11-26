@@ -1,5 +1,7 @@
 # @degenly/agent
 
+[![degenly/degenly-agent MCP server](https://glama.ai/mcp/servers/degenly/degenly-agent/badges/score.svg)](https://glama.ai/mcp/servers/degenly/degenly-agent)
+
 Degenly for AI agents: one package with an MCP server, a CLI and a `SKILL.md`.
 Your AI app (Claude Code, Gemini CLI, Cursor, Claude Desktop) uses it to look up Solana tokens and trade them on Degenly.
 Demo mode needs nothing; live mode uses a separate agent wallet whose key is created and kept on your computer.
